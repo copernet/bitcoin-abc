@@ -59,7 +59,7 @@ class WHC_TOKEN_MANAGE(BitcoinTestFramework):
         except JSONRPCException as e:
             assert str(e) == "Not a Wormhole Protocol transaction (-5)"
 
-        # exp3: Desired property not 1
+        # exp3: Desired property not 1 
         ret = self.nodes[0].whc_createrawtx_input("", trans_id, 1)
         payload = self.nodes[0].whc_createpayload_issuancecrowdsale(1, 1, 0, "", "", "name", "", "", 1, "100",
                                                                     3034937279, 10, 0, "1000000")

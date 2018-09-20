@@ -4,8 +4,7 @@
 #include "util.h"
 #include "utiltime.h"
 #include "logging.h"
-#include "chainparamsbase.h"
-#include "logging.h"
+
 
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>

@@ -901,7 +901,6 @@ int CMPTransaction::interpretPacket()
         return (PKT_ERROR -3);
     }
     */
-
     switch (type) {
         case MSC_TYPE_SIMPLE_SEND:
             return logicMath_SimpleSend();
@@ -1324,7 +1323,7 @@ int CMPTransaction::logicMath_SendToOwners()
     // ------------------------------------------
 
     uint32_t distributeTo = distribution_property;
-    OwnerAddrType receiversSet = STO_GetReceivers(sender, distributeTo, nValue);
+    OwnerAddrType receiversSet = STO_GetReceivers(sender, distributeTo, nValue, block);
     uint64_t numberOfReceivers = receiversSet.size();
 
     // make sure we found some owners

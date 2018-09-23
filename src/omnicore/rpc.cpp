@@ -398,9 +398,10 @@ UniValue whc_getfeeshare(const Config &config, const JSONRPCRequest &request)
 
     OwnerAddrType receiversSet;
     if (ecosystem == 1) {
-        receiversSet = STO_GetReceivers("FEEDISTRIBUTION", OMNI_PROPERTY_WHC, COIN.GetSatoshis());
+        //todo !!! need fix this blockHeight, when this function is used
+        receiversSet = STO_GetReceivers("FEEDISTRIBUTION", OMNI_PROPERTY_WHC, COIN.GetSatoshis(), 0);
     } else {
-        receiversSet = STO_GetReceivers("FEEDISTRIBUTION", OMNI_PROPERTY_TWHC, COIN.GetSatoshis());
+        receiversSet = STO_GetReceivers("FEEDISTRIBUTION", OMNI_PROPERTY_TWHC, COIN.GetSatoshis(), 0);
     }
 
     for (OwnerAddrType::reverse_iterator it = receiversSet.rbegin(); it != receiversSet.rend(); ++it) {

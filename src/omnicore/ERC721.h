@@ -5,147 +5,96 @@
 #ifndef WORMHOLE_ERC721_H
 #define WORMHOLE_ERC721_H
 
+#include "omnicore/persistence.h"
+
+#include "uint256.h"
+#include "arith_uint256.h"
+#include "serialize.h"
+
+#include <boost/filesystem.hpp>
+
 #include <stdint.h>
 #include <stdio.h>
 #include <string>
 #include <vector>
 #include <map>
 
-enum ERC721REASON{
-    OK,
-    ERC721_PROPERTY_EXSIT,
-    ERC721_MINT_BURNADDR
-};
-
-class ERC721Token{
-public:
-    struct approvalNews{
-        std::string  approvalAddress;
-        bool        approval;
-    };
-
-private:
-    //  Mapping from token ID to owner
-    std::map<uint256, std::string>  tokenOwner;
-
-    //  Mapping from token ID to owner
-    std::map<uint256, std::string> tokenApprovals;
-
-    //  Mapping from owner to number of owned token
-    std::map<std::string, uint256> ownedTokenCount;
-
-    //  Mapping from owner to operator approvals
-    std::map<std::string, approvalNews> operatorApprovals;
-
-    std::string     issuer;
-    std::string     name;
-    std::string     symbol;
-    uint256         max_tokens;
-
-    //  Mapping from owner to list of owned token IDs
-    std::map<std::string, std::vector<uint256>> ownedTokens;
-
-    //  Mapping from token ID to index of the owner tokens list
-    std::map<uint256, uint256>  ownedTokensIndex;
-
-    //  Array with all token ids, used for enumeration
-    std::vector<uint256>    allTokens;
-
-    //  Mapping from token id to position in the allTokens array
-    std::map<uint256, uint256>  allTokensIndex;
-
-    //  Optional mapping for token URIs
-    std::map<uint256, std::string>  tokenURIs;
-
-public:
-    std::string getPropertyName(){
-        return name;
-    }
-    std::string getPropertySymbol(){
-        return symbol;
-    }
-    std::string getPropertyIssuer(){
-        return issuer;
-    }
-    uint256 getMaxIssueTokens(){
-        return max_tokens;
-    }
-
-    ERC721REASON mint(std::string toAddr, uint256 tokenID){
-        return OK;
-    }
-
-    uint256 balanceOf(std::string addr){
-        if(addr == burnwhc_address){
-            return -1;
-        }
-        auto iter = ownedTokenCount.find(addr);
-        if (iter != ownedTokenCount.end()){
-            return iter->second;
-        }
-        return 0;
-    }
-
-    bool ownerOf(uint256 tokenID, std::string& addr){
-        auto iter = tokenOwner.find(tokenID);
-        if (iter != tokenOwner.end()){
-            if (iter->second != burnwhc_address){
-                addr = iter;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    bool approve(std::string txsender, std::string to, uint256 tokenID){
-        return true;
-    }
-
-    bool getApproved(uint256 tokenID){
-        return true;
-    }
-
-    bool setApprovalForAll(std::string txsender, std::string to, bool approved){
-        return true;
-    }
-
-    bool isApprovedForAll(std::string owner, std::string operatorAddr){
-        return true;
-    }
-
-    bool transferFrom(std::string txsender, std::string from, std::string to, uint256 tokenID){
-        return true;
-    }
-
-    bool exists(uint256 tokenID){
-        return true;
-    }
-
-    bool isApprovedOrOwner(std::string spender, uint256 tokenID){
-        return true;
-    }
-
-    bool burn(std::string owner, uint256 tokenID){
-        return true;
-    }
-
-    bool clearApproval(std::string owner, uint256 tokenID){
-        return true;
-    }
-
-    bool addTokenTo(std::string to, uint256 tokenID){
-        return true;
-    }
-
-    bool removeTokenFrom(std::string from, uint256 tokenID){
-        return true;
-    }
-    
+enum Flags{
+    FRESH = (1 << 0),
+    DIRTY = (1 << 1),
 };
 
 class CMPSPERC721Info : public CDBBase {
 public:
+    struct PropertyInfo{
+        std::string         issuer;
+        std::string         name;
+        std::string         symbol;
+        std::string         url;
+        std::string         data;
+        uint64_t            maxTokens;
+        uint64_t            haveIssuedNumber;
+        uint64_t            currentValidIssuedNumer;
+        uint64_t            autoNextTokenID;
+        uint256             txid;
+        uint256             creationBlock;
+        uint256             updateBlock;
+        arith_uint256       propertyID;
+
+        PropertyInfo();
+
+        ADD_SERIALIZE_METHODS;
+
+        template <typename Stream, typename Operation>
+        inline void SerializationOp(Stream& s, Operation ser_action) {
+            READWRITE(issuer);
+            READWRITE(name);
+            READWRITE(symbol);
+            READWRITE(url);
+            READWRITE(data);
+            READWRITE(maxTokens);
+            READWRITE(haveIssuedNumber);
+            READWRITE(currentValidIssuedNumer);
+            READWRITE(autoNextTokenID);
+            READWRITE(txid);
+            READWRITE(creationBlock);
+            READWRITE(updateBlock);
+        }
+    };
+private:
+
+    arith_uint256 next_erc721spid;
+
+    // map from propertyID to the property, the Flags indicate whether write the property info to database.
+    std::map<arith_uint256, std::pair<PropertyInfo, Flags> > cacheMapPropertyInfo;
+
+public:
+
+    CMPSPERC721Info(const boost::filesystem::path& path, bool fWipe);
+    virtual ~CMPSPERC721Info();
+
+    void init(arith_uint256 nextSPID = 1);
+    arith_uint256 peekNextSPID() const;
+
+    // When create a valid property, will call this function write property data to cacheMapPropertyInfo
+    // return: the new property ID
+    arith_uint256 putSP(const PropertyInfo& info);
+
+    // Get the special property's info.
+    bool getAndUpdateSP(arith_uint256 propertyID, std::pair<PropertyInfo, Flags>** info);
+
+    // get water block hash
+    bool getWatermark(uint256& watermark) const;
+
+    // Flush flush cacheMapPropertyInfo struct data with DIRTY flag to database.
+    // Then clear the cacheMapPropertyInfo struct.
+    void flush(uint256& watermark);
+
+    // Delete database data with the param block hash. Then rollback the latest information
+    // and historical information of all properties to the previous status.
+    bool popBlock(const uint256& block_hash, uint64_t& remainingSPs);
 
 };
+
 
 #endif //WORMHOLE_ERC721_H

@@ -6,6 +6,11 @@
 #include "omnicore/ERC721.h"
 #include "omnicore/log.h"
 
+#include "streams.h"
+#include "config.h"
+#include "clientversion.h"
+#include "serialize.h"
+
 #include <boost/filesystem.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/algorithm/string.hpp>
@@ -26,17 +31,16 @@ CMPSPERC721Info::PropertyInfo::PropertyInfo()
           autoNextTokenID(0){}
 
 CMPSPERC721Info::CMPSPERC721Info(const boost::filesystem::path& path, bool fWipe) {
-    const CChainParams &params = GetConfig().GetChainParams();
     leveldb::Status status = Open(path, fWipe);
     PrintToConsole("Loading smart property database: %s\n", status.ToString());
     init();
 }
 
-void CMPSPERC721Info::init(arith_uint256 nextSPID){
+void CMPSPERC721Info::init(uint256 nextSPID){
     next_erc721spid = nextSPID;
 }
 
-arith_uint256 CMPSPERC721Info::peekNextSPID() const{
+uint256 CMPSPERC721Info::peekNextSPID() const{
     return next_erc721spid;
 }
 
@@ -44,15 +48,20 @@ CMPSPERC721Info::~CMPSPERC721Info() {
     if (msc_debug_persistence) PrintToLog("CMPSPERC721Info closed\n");
 }
 
-arith_uint256 CMPSPERC721Info::putSP(const PropertyInfo& info){
-    arith_uint256 propertyId = next_erc721spid++;
+static uint256 increaseOne(uint256& origin){
+    arith_uint256 tmp = UintToArith256(origin);
+    tmp++;
+    return ArithToUint256(tmp);
+}
+
+uint256 CMPSPERC721Info::putSP(const PropertyInfo& info){
+    uint256 propertyId = next_erc721spid;
+    next_erc721spid = increaseOne(next_erc721spid);
     cacheMapPropertyInfo[propertyId] = std::make_pair(info, Flags::DIRTY);
-    auto& value = cacheMapPropertyInfo[propertyId];
-    value.first.propertyID = propertyId;
     return propertyId;
 }
 
-bool CMPSPERC721Info::getAndUpdateSP(arith_uint256 propertyID, std::pair<PropertyInfo, Flags>** info){
+bool CMPSPERC721Info::getAndUpdateSP(uint256 propertyID, std::pair<PropertyInfo, Flags>** info){
     auto iter = cacheMapPropertyInfo.find(propertyID);
     if (iter == cacheMapPropertyInfo.end()){
         // DB key for property entry
@@ -65,7 +74,7 @@ bool CMPSPERC721Info::getAndUpdateSP(arith_uint256 propertyID, std::pair<Propert
         leveldb::Status status = pdb->Get(readoptions, slSpKey, &strSpValue);
         if (!status.ok()) {
             if (!status.IsNotFound()) {
-                PrintToLog("%s(): ERROR for SP %d: %s\n", __func__, propertyId, status.ToString());
+                PrintToLog("%s(): ERROR for SP %s: %s\n", __func__, propertyID.GetHex(), status.ToString());
             }
             return false;
         }
@@ -76,7 +85,7 @@ bool CMPSPERC721Info::getAndUpdateSP(arith_uint256 propertyID, std::pair<Propert
             ssSpValue >> tmpInfo;
             cacheMapPropertyInfo[propertyID] = std::make_pair(tmpInfo, Flags::FRESH);
         } catch (const std::exception& e) {
-            PrintToLog("%s(): ERROR for SP %d: %s\n", __func__, propertyId, e.what());
+            PrintToLog("%s(): ERROR for SP %s: %s\n", __func__, propertyID.GetHex(), e.what());
             return false;
         }
 
@@ -136,11 +145,12 @@ void CMPSPERC721Info::flush(uint256& watermark){
             leveldb::Status status = pdb->Get(readoptions, slSpKey, &strSpPrevValue);
             if (!status.ok()) {
                 if (!status.IsNotFound()) {
-                    PrintToLog("%s(): ERROR for SP %d: %s\n", __func__, propertyId, status.ToString());
+                    PrintToLog("%s(): ERROR for SP %s: %s\n", __func__, it.first.GetHex(), status.ToString());
 
                 }
 
-                // create a new property, will put the property to database.
+                // create a new property, will puL64
+                // t the property to database.
                 // Here we
                 // DB key for identifier lookup entry
                 CDataStream ssTxIndexKey(SER_DISK, CLIENT_VERSION);
@@ -155,22 +165,13 @@ void CMPSPERC721Info::flush(uint256& watermark){
 
                 std::string existingEntry;
                 if(!pdb->Get(readoptions, slTxIndexKey, &existingEntry).IsNotFound() && slTxValue.compare(existingEntry) != 0){
-                    std::string strError = strprintf("writing index txid %s : SP %d is overwriting a different value", info.txid.ToString(), propertyId);
+                    std::string strError = strprintf("writing index txid %s : SP %s is overwriting a different value", it.second.first.txid.ToString(), it.first.GetHex());
                     PrintToLog("%s() ERROR: %s\n", __func__, strError);
                 }
 
                 batch.Put(slSpKey, slSpValue);
                 batch.Put(slTxIndexKey, slTxValue);
 
-                continue;
-            }
-
-            PropertyInfo info;
-            try {
-                CDataStream ssSpValue(strSpValue.data(), strSpValue.data() + strSpValue.size(), SER_DISK, CLIENT_VERSION);
-                ssSpValue >> info;
-            } catch (const std::exception& e) {
-                PrintToLog("%s(): ERROR for SP %d: %s\n", __func__, propertyId, e.what());
                 continue;
             }
 
@@ -199,7 +200,7 @@ void CMPSPERC721Info::flush(uint256& watermark){
 
     leveldb::Status status = pdb->Write(syncoptions, &batch);
     if (!status.ok()) {
-        PrintToLog("%s(): ERROR for SP %d: %s\n", __func__, propertyId, status.ToString());
+        PrintToLog("%s(): ERROR for fluash %s\n", __func__,  status.ToString());
     }
     cacheMapPropertyInfo.clear();
 }

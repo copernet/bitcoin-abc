@@ -10,6 +10,7 @@
 #include "uint256.h"
 #include "arith_uint256.h"
 #include "serialize.h"
+#include "../uint256.h"
 
 #include <boost/filesystem.hpp>
 
@@ -23,6 +24,8 @@ enum Flags{
     FRESH = (1 << 0),
     DIRTY = (1 << 1),
 };
+
+uint256 ONE = ArithToUint256(arith_uint256(1));
 
 class CMPSPERC721Info : public CDBBase {
 public:
@@ -39,7 +42,6 @@ public:
         uint256             txid;
         uint256             creationBlock;
         uint256             updateBlock;
-        arith_uint256       propertyID;
 
         PropertyInfo();
 
@@ -63,25 +65,25 @@ public:
     };
 private:
 
-    arith_uint256 next_erc721spid;
+    uint256 next_erc721spid;
 
     // map from propertyID to the property, the Flags indicate whether write the property info to database.
-    std::map<arith_uint256, std::pair<PropertyInfo, Flags> > cacheMapPropertyInfo;
+    std::map<uint256, std::pair<PropertyInfo, Flags> > cacheMapPropertyInfo;
 
 public:
 
     CMPSPERC721Info(const boost::filesystem::path& path, bool fWipe);
     virtual ~CMPSPERC721Info();
 
-    void init(arith_uint256 nextSPID = 1);
-    arith_uint256 peekNextSPID() const;
+    void init(uint256 nextSPID = ONE);
+    uint256 peekNextSPID() const;
 
     // When create a valid property, will call this function write property data to cacheMapPropertyInfo
     // return: the new property ID
-    arith_uint256 putSP(const PropertyInfo& info);
+    uint256 putSP(const PropertyInfo& info);
 
     // Get the special property's info.
-    bool getAndUpdateSP(arith_uint256 propertyID, std::pair<PropertyInfo, Flags>** info);
+    bool getAndUpdateSP(uint256 propertyID, std::pair<PropertyInfo, Flags>** info);
 
     // get water block hash
     bool getWatermark(uint256& watermark) const;
@@ -95,6 +97,7 @@ public:
     bool popBlock(const uint256& block_hash, uint64_t& remainingSPs);
 
 };
+
 
 
 #endif //WORMHOLE_ERC721_H

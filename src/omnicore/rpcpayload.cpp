@@ -674,11 +674,11 @@ UniValue omni_createpayload_disablefreezing(const Config &config,const JSONRPCRe
     return HexStr(payload.begin(), payload.end());
 }
 
-UniValue omni_createpayload_freeze(const Config &config,const JSONRPCRequest &request)
+UniValue WHC_createpayload_freeze(const Config &config,const JSONRPCRequest &request)
 {
     if (request.fHelp || request.params.size() != 3)
         throw runtime_error(
-            "omni_createpayload_freeze \"toaddress\" propertyid amount \n"
+            "whc_createpayload_freeze \"toaddress\" propertyid amount \n"
 
             "\nCreates the payload to freeze an address for a centrally managed token.\n"
 
@@ -691,8 +691,8 @@ UniValue omni_createpayload_freeze(const Config &config,const JSONRPCRequest &re
             "\"payload\"             (string) the hex-encoded payload\n"
 
             "\nExamples:\n"
-            + HelpExampleCli("omni_createpayload_freeze", "\"3HTHRxu3aSDV4deakjC7VmsiUp7c6dfbvs\" 1 0")
-            + HelpExampleRpc("omni_createpayload_freeze", "\"3HTHRxu3aSDV4deakjC7VmsiUp7c6dfbvs\", 1, 0")
+            + HelpExampleCli("whc_createpayload_freeze", "\"3HTHRxu3aSDV4deakjC7VmsiUp7c6dfbvs\" 1 0")
+            + HelpExampleRpc("whc_createpayload_freeze", "\"3HTHRxu3aSDV4deakjC7VmsiUp7c6dfbvs\", 1, 0")
         );
 
     std::string refAddress = ParseAddress(request.params[0]);

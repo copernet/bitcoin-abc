@@ -5,7 +5,7 @@
 #define BITCOIN_CASHADDRENC_H
 
 #include "script/standard.h"
-
+#include "pubkey.h"
 #include <string>
 #include <vector>
 
@@ -29,4 +29,40 @@ CashAddrContent DecodeCashAddrContent(const std::string &addr,
 CTxDestination DecodeCashAddrDestination(const CashAddrContent &content);
 
 std::vector<uint8_t> PackCashAddrContent(const CashAddrContent &content);
+
+class DstTypeChecker : public boost::static_visitor<void> {
+public:
+    void operator()(const CKeyID &id) { isKey = true; }
+    void operator()(const CScriptID &id) { isScript = true; }
+    void operator()(const CNoDestination &) {}
+
+    static bool IsScriptDst(const CTxDestination &d) {
+        DstTypeChecker checker;
+        boost::apply_visitor(checker, d);
+        return checker.isScript;
+    }
+
+    static bool IsKeyDst(const CTxDestination &d) {
+        DstTypeChecker checker;
+        boost::apply_visitor(checker, d);
+        return checker.isKey;
+    }
+
+private:
+    DstTypeChecker() : isKey(false), isScript(false) {}
+    bool isKey;
+    bool isScript;
+};
+
+class DstAddrtohex : public boost::static_visitor<void> {
+public:
+    std::string operator()(const CKeyID &id) { return id.GetHex(); }
+    std::string operator()(const CScriptID &id) { return id.GetHex(); }
+    void operator()(const CNoDestination &) {}
+    static bool IsScriptDst(const CTxDestination &d) {
+        DstAddrtohex checker;
+        boost::apply_visitor(checker, d);
+        return true;
+    }
+};
 #endif

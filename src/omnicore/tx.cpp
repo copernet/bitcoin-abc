@@ -17,6 +17,7 @@
 #include "omnicore/utilsbitcoin.h"
 #include "omnicore/version.h"
 #include "omnicore/rpcvalues.h"
+#include "omnicore/ERC721.h"
 
 #include "validation.h"
 #include "amount.h"

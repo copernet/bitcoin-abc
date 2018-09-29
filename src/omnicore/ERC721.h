@@ -58,7 +58,6 @@ public:
             READWRITE(haveIssuedNumber);
             READWRITE(currentValidIssuedNumer);
             READWRITE(autoNextTokenID);
-            READWRITE(txid);
             READWRITE(creationBlock);
             READWRITE(updateBlock);
         }
@@ -174,5 +173,9 @@ public:
     bool findTokenByTX(const uint256& txhash, uint256& propertyid, uint256& tokenid);
 };
 
+namespace mastercore{
+    extern CMPSPERC721Info *my_erc721sps;
+    extern ERC721TokenInfos *my_erc721tokens;
+}
 
 #endif //WORMHOLE_ERC721_H

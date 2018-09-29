@@ -237,6 +237,9 @@ void Shutdown() {
         delete pblocktree;
         pblocktree = nullptr;
     }
+
+    // wormhole shutdown
+    mastercore_shutdown();
 #ifdef ENABLE_WALLET
     for (CWalletRef pwallet : vpwallets) {
         pwallet->Flush(true);

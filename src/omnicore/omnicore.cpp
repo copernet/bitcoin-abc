@@ -30,6 +30,7 @@
 #include "omnicore/walletcache.h"
 #include "omnicore/wallettxs.h"
 #include "omnicore/rpcvalues.h"
+#include "omnicore/ERC721.h"
 
 #include "consensus/validation.h"
 #include "net.h"
@@ -289,6 +290,9 @@ AcceptMap mastercore::my_accepts;
 
 CMPSPInfo *mastercore::_my_sps;
 CrowdMap mastercore::my_crowds;
+
+CMPSPERC721Info *mastercore::my_erc721sps;
+ERC721TokenInfos *mastercore::my_erc721tokens;
 
 std::multimap<int, std::pair< std::string, std::pair<std::string, int64_t> > > mastercore::pendingCreateWHC;
 
@@ -2220,6 +2224,14 @@ int mastercore_shutdown()
     if (p_feehistory) {
         delete p_feehistory;
         p_feehistory = NULL;
+    }
+    if (my_erc721sps){
+        delete my_erc721sps;
+        my_erc721sps = NULL;
+    }
+    if (my_erc721tokens){
+        delete my_erc721tokens;
+        my_erc721tokens = NULL;
     }
 
     mastercoreInitialized = 0;

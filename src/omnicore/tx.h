@@ -102,14 +102,14 @@ private:
     //ERC721 property And token
     uint8_t erc721_action;
     uint256 erc721_propertyid;
-    std::string erc721_propertysymbol;
-    std::string erc721_propertyname;
-    std::string erc721_propertyurl;
-    std::string erc721_propertydata;
+    char erc721_propertysymbol[SP_STRING_FIELD_LEN];
+    char erc721_propertyname[SP_STRING_FIELD_LEN];
+    char erc721_propertyurl[SP_STRING_FIELD_LEN];
+    char erc721_propertydata[SP_STRING_FIELD_LEN];
 
     uint256 erc721_tokenid;
-    std::string erc721token_attribute;
-    std::string erc721_tokenurl;
+    char erc721token_attribute[ERC721_TOKEN_ATTRIBUTES*2];
+    char erc721_tokenurl[SP_STRING_FIELD_LEN];
 
 
     /** Checks whether a pointer to the payload is past it's last position. */

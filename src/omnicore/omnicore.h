@@ -44,6 +44,7 @@ int const MAX_STATE_HISTORY = 50;
 
 // maximum size of string fields
 #define SP_STRING_FIELD_LEN 256
+#define ERC721_TOKEN_ATTRIBUTES 32
 
 // Omni Layer Transaction Class
 #define NO_MARKER    0

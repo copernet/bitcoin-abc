@@ -210,40 +210,40 @@ public:
 
 namespace mastercore
 {
-typedef std::map<std::string, CMPCrowd> CrowdMap;
+    typedef std::map<std::string, CMPCrowd> CrowdMap;
 
-extern CMPSPInfo* _my_sps;
-extern CrowdMap my_crowds;
+    extern CMPSPInfo* _my_sps;
+    extern CrowdMap my_crowds;
 
-std::string strPropertyType(int propertyType);
-std::string strEcosystem(uint8_t ecosystem);
+    std::string strPropertyType(int propertyType);
+    std::string strEcosystem(uint8_t ecosystem);
 
-std::string getPropertyName(uint32_t propertyId);
-bool isPropertyDivisible(uint32_t propertyId);
-bool IsPropertyIdValid(uint32_t propertyId);
-int getPropertyType(uint32_t propertyId);
-std::string getprecision(uint32_t property);
+    std::string getPropertyName(uint32_t propertyId);
+    bool isPropertyDivisible(uint32_t propertyId);
+    bool IsPropertyIdValid(uint32_t propertyId);
+    int getPropertyType(uint32_t propertyId);
+    std::string getprecision(uint32_t property);
 
-CMPCrowd* getCrowd(const std::string& address);
+    CMPCrowd* getCrowd(const std::string& address);
 
-bool isCrowdsaleActive(uint32_t propertyId);
-bool isCrowdsalePurchase(const uint256& txid, const std::string& address, int64_t* propertyId, int64_t* userTokens, int64_t* issuerTokens, int64_t* invested);
+    bool isCrowdsaleActive(uint32_t propertyId);
+    bool isCrowdsalePurchase(const uint256& txid, const std::string& address, int64_t* propertyId, int64_t* userTokens, int64_t* issuerTokens, int64_t* invested);
 
-/** Calculates missing bonus tokens, which are credited to the crowdsale issuer. */
-int64_t GetMissedIssuerBonus(const CMPSPInfo::Entry& sp, const CMPCrowd& crowdsale);
+    /** Calculates missing bonus tokens, which are credited to the crowdsale issuer. */
+    int64_t GetMissedIssuerBonus(const CMPSPInfo::Entry& sp, const CMPCrowd& crowdsale);
 
-/** Calculates amounts credited for a crowdsale purchase. */
-void calculateFundraiser(uint16_t tokenPrecision, int64_t transfer,
-                                         uint8_t bonusPerc, int64_t closeSeconds,
-                                         int64_t currentSeconds, int64_t price,
-                                         int64_t soldTokens, int64_t totalTokens,
-                                         int64_t &purchasedTokens,
-                                         bool &closeCrowdsale, int64_t &refund);
+    /** Calculates amounts credited for a crowdsale purchase. */
+    void calculateFundraiser(uint16_t tokenPrecision, int64_t transfer,
+                                             uint8_t bonusPerc, int64_t closeSeconds,
+                                             int64_t currentSeconds, int64_t price,
+                                             int64_t soldTokens, int64_t totalTokens,
+                                             int64_t &purchasedTokens,
+                                             bool &closeCrowdsale, int64_t &refund);
 
 
-void eraseMaxedCrowdsale(const std::string& address, int64_t blockTime, int block);
+    void eraseMaxedCrowdsale(const std::string& address, int64_t blockTime, int block);
 
-unsigned int eraseExpiredCrowdsale(const CBlockIndex* pBlockIndex);
+    unsigned int eraseExpiredCrowdsale(const CBlockIndex* pBlockIndex);
 }
 
 

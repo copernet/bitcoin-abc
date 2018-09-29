@@ -351,6 +351,10 @@ ERC721TokenInfos::~ERC721TokenInfos(){
 }
 
 bool ERC721TokenInfos::existToken(const uint256& propertyID, const uint256& tokenID){
+    if(!mastercore::my_erc721sps->existSP(propertyID)){
+        return false;
+    }
+
     if (cacheTokens.find(propertyID) == cacheTokens.end()){
         cacheTokens[propertyID] = ERC721Token();
     }

@@ -92,11 +92,13 @@ public:
 
     // Flush flush cacheMapPropertyInfo struct data with DIRTY flag to database.
     // Then clear the cacheMapPropertyInfo struct.
-    void flush(uint256& watermark);
+    bool flush(uint256& watermark);
 
     // Delete database data with the param block hash. Then rollback the latest information
     // and historical information of all properties to the previous status.
-    bool popBlock(const uint256& block_hash, uint64_t& remainingSPs);
+    bool popBlock(const uint256& block_hash);
+
+    bool findERCSPByTX(const uint256& txhash, uint256& propertyid);
 
 };
 
@@ -163,12 +165,13 @@ public:
     bool getWatermark(uint256& watermark) const;
 
     // Flush all tokens info of all property to the database. And write success will clear these cacheMap.
-    void flush(const uint256& block_hash);
+    bool flush(const uint256& block_hash);
 
     // // Delete database data with the param block hash. Then rollback the latest information
     // and historical information of all properties's tokens to the previous status.
     bool popBlock(const uint256& block_hash);
 
+    bool findTokenByTX(const uint256& txhash, uint256& propertyid, uint256& tokenid);
 };
 
 

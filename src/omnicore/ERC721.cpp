@@ -32,7 +32,7 @@
 
 CMPSPERC721Info::PropertyInfo::PropertyInfo()
         : maxTokens(0), haveIssuedNumber(0), currentValidIssuedNumer(0),
-          autoNextTokenID(0){}
+          autoNextTokenID(1){}
 
 CMPSPERC721Info::CMPSPERC721Info(const boost::filesystem::path& path, bool fWipe) {
     leveldb::Status status = Open(path, fWipe);
@@ -93,6 +93,7 @@ bool CMPSPERC721Info::existSP(uint256 propertyID){
         cacheMapPropertyInfo[propertyID] = std::make_pair(tmpInfo, Flags::FRESH);
     } catch (const std::exception& e) {
         PrintToLog("%s(): ERROR for SP %s: %s\n", __func__, propertyID.GetHex(), e.what());
+        return false;
     }
     return true;
 }
@@ -157,10 +158,82 @@ bool CMPSPERC721Info::getWatermark(uint256& watermark) const{
     }
 
     return true;
-
 }
 
-void CMPSPERC721Info::flush(uint256& watermark){
+bool CMPSPERC721Info::popBlock(const uint256& block_hash){
+    leveldb::WriteBatch commitBatch;
+    leveldb::Iterator* iter = NewIterator();
+
+    CDataStream ssSpKeyPrefix(SER_DISK, CLIENT_VERSION);
+    ssSpKeyPrefix << 's';
+    leveldb::Slice slSpKeyPrefix(&ssSpKeyPrefix[0], ssSpKeyPrefix.size());
+
+    for (iter->Seek(slSpKeyPrefix); iter->Valid() && iter->key().starts_with(slSpKeyPrefix); iter->Next()) {
+        // deserialize the persisted value
+        leveldb::Slice slSpValue = iter->value();
+        PropertyInfo info;
+        try {
+            CDataStream ssValue(slSpValue.data(), slSpValue.data() + slSpValue.size(), SER_DISK, CLIENT_VERSION);
+            ssValue >> info;
+        } catch (const std::exception& e) {
+            PrintToLog("%s(): ERROR: %s\n", __func__, e.what());
+            return false;
+        }
+
+        if(info.updateBlock == block_hash){
+            leveldb::Slice slSpKey = iter->key();
+
+            // need to roll this SP back
+            if (info.updateBlock == info.creationBlock) {
+                // this is the block that created this SP, so delete the SP and the tx index entry
+                CDataStream ssTxIndexKey(SER_DISK, CLIENT_VERSION);
+                ssTxIndexKey << std::make_pair('t', info.txid);
+                leveldb::Slice slTxIndexKey(&ssTxIndexKey[0], ssTxIndexKey.size());
+                commitBatch.Delete(slSpKey);
+                commitBatch.Delete(slTxIndexKey);
+            } else {
+                uint256 propertyId;
+                try {
+                    CDataStream ssValue(1+slSpKey.data(), 1+slSpKey.data()+slSpKey.size(), SER_DISK, CLIENT_VERSION);
+                    ssValue >> propertyId;
+                } catch (const std::exception& e) {
+                    PrintToLog("%s(): ERROR: %s\n", __func__, e.what());
+                    return false;
+                }
+
+                CDataStream ssSpPrevKey(SER_DISK, CLIENT_VERSION);
+                ssSpPrevKey << 'b';
+                ssSpPrevKey << info.updateBlock;
+                ssSpPrevKey << propertyId;
+                leveldb::Slice slSpPrevKey(&ssSpPrevKey[0], ssSpPrevKey.size());
+
+                std::string strSpPrevValue;
+                if (!pdb->Get(readoptions, slSpPrevKey, &strSpPrevValue).IsNotFound()) {
+                    // copy the prev state to the current state and delete the old state
+                    commitBatch.Put(slSpKey, strSpPrevValue);
+                    commitBatch.Delete(slSpPrevKey);
+                } else {
+                    // failed to find a previous SP entry, trigger reparse
+                    PrintToLog("%s(): ERROR: failed to retrieve previous SP entry\n", __func__);
+                    return false;
+                }
+            }
+        }
+    }
+
+    // clean up the iterator
+    delete iter;
+
+    leveldb::Status status = pdb->Write(syncoptions, &commitBatch);
+    if (!status.ok()) {
+        PrintToLog("%s(): ERROR: %s\n", __func__, status.ToString());
+        return false;
+    }
+
+    return true;
+}
+
+bool CMPSPERC721Info::flush(uint256& watermark){
     // atomically write both the the SP and the index to the database
     leveldb::WriteBatch batch;
 
@@ -183,7 +256,6 @@ void CMPSPERC721Info::flush(uint256& watermark){
             if (!status.ok()) {
                 if (!status.IsNotFound()) {
                     PrintToLog("%s(): ERROR for SP %s: %s\n", __func__, it.first.GetHex(), status.ToString());
-
                 }
 
                 // create a new property, will put the property to database.
@@ -236,90 +308,38 @@ void CMPSPERC721Info::flush(uint256& watermark){
     leveldb::Status status = pdb->Write(syncoptions, &batch);
     if (!status.ok()) {
         PrintToLog("%s(): ERROR for fluash %s\n", __func__,  status.ToString());
+        return false;
     }
     cacheMapPropertyInfo.clear();
+
+    return true;
 }
 
+bool CMPSPERC721Info::findERCSPByTX(const uint256& txhash, uint256& propertyId){
 
+    // DB key for identifier lookup entry
+    CDataStream ssTxIndexKey(SER_DISK, CLIENT_VERSION);
+    ssTxIndexKey << std::make_pair('t', txhash);
+    leveldb::Slice slTxIndexKey(&ssTxIndexKey[0], ssTxIndexKey.size());
 
-bool CMPSPERC721Info::popBlock(const uint256& block_hash, uint64_t& remainingSPs){
-    remainingSPs = 0;
-    leveldb::WriteBatch commitBatch;
-    leveldb::Iterator* iter = NewIterator();
-
-    CDataStream ssSpKeyPrefix(SER_DISK, CLIENT_VERSION);
-    ssSpKeyPrefix << 's';
-    leveldb::Slice slSpKeyPrefix(&ssSpKeyPrefix[0], ssSpKeyPrefix.size());
-
-    for (iter->Seek(slSpKeyPrefix); iter->Valid() && iter->key().starts_with(slSpKeyPrefix); iter->Next()) {
-        // deserialize the persisted value
-        leveldb::Slice slSpValue = iter->value();
-        PropertyInfo info;
-        try {
-            CDataStream ssValue(slSpValue.data(), slSpValue.data() + slSpValue.size(), SER_DISK, CLIENT_VERSION);
-            ssValue >> info;
-        } catch (const std::exception& e) {
-            PrintToLog("%s(): ERROR: %s\n", __func__, e.what());
-            return false;
-        }
-
-        if(info.updateBlock == block_hash){
-            leveldb::Slice slSpKey = iter->key();
-
-            // need to roll this SP back
-            if (info.updateBlock == info.creationBlock) {
-                // this is the block that created this SP, so delete the SP and the tx index entry
-                CDataStream ssTxIndexKey(SER_DISK, CLIENT_VERSION);
-                ssTxIndexKey << std::make_pair('t', info.txid);
-                leveldb::Slice slTxIndexKey(&ssTxIndexKey[0], ssTxIndexKey.size());
-                commitBatch.Delete(slSpKey);
-                commitBatch.Delete(slTxIndexKey);
-            } else {
-                uint256 propertyId;
-                try {
-                    CDataStream ssValue(1+slSpKey.data(), 1+slSpKey.data()+slSpKey.size(), SER_DISK, CLIENT_VERSION);
-                    ssValue >> propertyId;
-                } catch (const std::exception& e) {
-                    PrintToLog("%s(): ERROR: %s\n", __func__, e.what());
-                    return false;
-                }
-
-                CDataStream ssSpPrevKey(SER_DISK, CLIENT_VERSION);
-                ssSpPrevKey << 'b';
-                ssSpPrevKey << info.updateBlock;
-                ssSpPrevKey << propertyId;
-                leveldb::Slice slSpPrevKey(&ssSpPrevKey[0], ssSpPrevKey.size());
-
-                std::string strSpPrevValue;
-                if (!pdb->Get(readoptions, slSpPrevKey, &strSpPrevValue).IsNotFound()) {
-                    // copy the prev state to the current state and delete the old state
-                    commitBatch.Put(slSpKey, strSpPrevValue);
-                    commitBatch.Delete(slSpPrevKey);
-                    ++remainingSPs;
-                } else {
-                    // failed to find a previous SP entry, trigger reparse
-                    PrintToLog("%s(): ERROR: failed to retrieve previous SP entry\n", __func__);
-                    return false;
-                }
-            }
-        } else{
-            remainingSPs++;
-        }
-
+    // DB value for identifier
+    std::string strTxIndexValue;
+    if (!pdb->Get(readoptions, slTxIndexKey, &strTxIndexValue).ok()) {
+        std::string strError = strprintf("failed to find property created with %s", txhash.GetHex());
+        PrintToLog("%s(): ERROR: %s", __func__, strError);
+        return false;
     }
 
-    // clean up the iterator
-    delete iter;
-
-    leveldb::Status status = pdb->Write(syncoptions, &commitBatch);
-    if (!status.ok()) {
-        PrintToLog("%s(): ERROR: %s\n", __func__, status.ToString());
+    try {
+        CDataStream ssValue(strTxIndexValue.data(), strTxIndexValue.data() + strTxIndexValue.size(), SER_DISK, CLIENT_VERSION);
+        ssValue >> propertyId;
+    } catch (const std::exception& e) {
+        PrintToLog("%s(): ERROR: %s\n", __func__, e.what());
         return false;
     }
 
     return true;
 }
-
 
 ERC721TokenInfos::ERC721TokenInfos(const boost::filesystem::path& path, bool fWipe){
     leveldb::Status status = Open(path, fWipe);
@@ -358,6 +378,7 @@ bool ERC721TokenInfos::existToken(const uint256& propertyID, const uint256& toke
             cacheTokens[propertyID].cacheTokenOwner[tokenID] = std::make_pair(tmpInfo, Flags::FRESH);
         } catch (const std::exception& e) {
             PrintToLog("%s(): ERROR for SP %s: %s\n", __func__, propertyID.GetHex(), e.what());
+            return false;
         }
     }
 
@@ -460,7 +481,7 @@ bool ERC721TokenInfos::getWatermark(uint256& watermark) const{
     return true;
 }
 
-void ERC721TokenInfos::flush(const uint256& block_hash){
+bool ERC721TokenInfos::flush(const uint256& block_hash){
     leveldb::WriteBatch batch;
 
     for(auto propertyIter : cacheTokens){
@@ -539,8 +560,10 @@ void ERC721TokenInfos::flush(const uint256& block_hash){
     leveldb::Status status = pdb->Write(syncoptions, &batch);
     if (!status.ok()) {
         PrintToLog("%s(): ERROR for flush %s\n", __func__,  status.ToString());
+        return false;
     }
     cacheTokens.clear();
+    return true;
 }
 
 bool ERC721TokenInfos::popBlock(const uint256& block_hash){
@@ -601,9 +624,7 @@ bool ERC721TokenInfos::popBlock(const uint256& block_hash){
                     PrintToLog("%s(): ERROR: failed to retrieve previous SP entry\n", __func__);
                     return false;
                 }
-
             }
-
         }
     }
 
@@ -612,6 +633,33 @@ bool ERC721TokenInfos::popBlock(const uint256& block_hash){
     leveldb::Status status = pdb->Write(syncoptions, &commitBatch);
     if(!status.ok()){
         PrintToLog("%s(): ERROR: %s\n", __func__, status.ToString());
+        return false;
+    }
+
+    return true;
+}
+
+bool ERC721TokenInfos::findTokenByTX(const uint256& txhash, uint256& propertyid, uint256& tokenid){
+
+    // DB key for identifier lookup entry
+    CDataStream ssTxIndexKey(SER_DISK, CLIENT_VERSION);
+    ssTxIndexKey << std::make_pair('t', txhash);
+    leveldb::Slice slTxIndexKey(&ssTxIndexKey[0], ssTxIndexKey.size());
+
+    // DB value for identifier
+    std::string strTxIndexValue;
+    if (!pdb->Get(readoptions, slTxIndexKey, &strTxIndexValue).ok()) {
+        std::string strError = strprintf("failed to find property created with %s", txhash.GetHex());
+        PrintToLog("%s(): ERROR: %s", __func__, strError);
+        return false;
+    }
+
+    try {
+        CDataStream ssValue(strTxIndexValue.data(), strTxIndexValue.data() + strTxIndexValue.size(), SER_DISK, CLIENT_VERSION);
+        ssValue >> propertyid;
+        ssValue >> tokenid;
+    } catch (const std::exception& e) {
+        PrintToLog("%s(): ERROR: %s\n", __func__, e.what());
         return false;
     }
 

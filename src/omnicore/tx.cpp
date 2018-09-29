@@ -22,6 +22,8 @@
 #include "base58.h"
 #include "sync.h"
 #include "utiltime.h"
+#include "omnicore.h"
+#include "tx.h"
 
 #include <boost/algorithm/string.hpp>
 #include <boost/lexical_cast.hpp>
@@ -122,6 +124,9 @@ bool CMPTransaction::interpret_Transaction()
 
         case MSC_TYPE_SEND_ALL:
             return interpret_SendAll();
+
+        case WHC_TYPE_ERC721:
+            return interpret_ERC721();
 
         //change_001
         /*
@@ -305,6 +310,52 @@ bool CMPTransaction::interpret_SendAll()
 
     return true;
 }
+
+/** Tx 9 */
+bool CMPTransaction::interpret_ERC721(){
+    if(pkt_size < 5){
+        return false;
+    }
+    memcpy(&erc721_action, &pkt[4], 1);
+
+    switch (erc721_action){
+        case ERC721Action::ISSUE_ERC721_PROPERTY :
+            return interpret_ERC721_issueproperty();
+
+        case ERC721Action::ISSUE_ERC721_TOKEN :
+            return interpret_ERC721_issuetoken();
+
+        case ERC721Action::TRANSFER_REC721_TOKEN :
+            return interpret_ERC721_transfertoken();
+
+        case ERC721Action::DESTROY_ERC721_TOKEN :
+            return interpret_ERC721_destroytoken();
+    }
+
+    return false;
+}
+
+bool CMPTransaction::interpret_ERC721_issueproperty(){
+
+    return true;
+}
+
+bool CMPTransaction::interpret_ERC721_issuetoken(){
+
+    return true;
+}
+
+bool CMPTransaction::interpret_ERC721_transfertoken(){
+
+    return true;
+}
+
+bool CMPTransaction::interpret_ERC721_destroytoken(){
+
+    return true;
+}
+
+
 
 /** Tx 20 */
 bool CMPTransaction::interpret_TradeOffer()
@@ -980,6 +1031,9 @@ int CMPTransaction::interpretPacket()
         */
         case WHC_TYPE_GET_BASE_PROPERTY:
             return logicMath_burnBCHGetWHC();
+
+        case WHC_TYPE_ERC721:
+            return logicMath_ERC721();
     }
 
     return (PKT_ERROR -100);
@@ -1002,14 +1056,54 @@ int CMPTransaction::logicMath_burnBCHGetWHC()
             PrintToLog("Exodus Fundraiser tx detected, tx %s generated %s\n", txid.ToString(), amountGenerated);
             return 0;
         }{
-		PrintToLog("not have enough bch : %d\n", burnBCH);
-	}
+		    PrintToLog("not have enough bch : %d\n", burnBCH);
+	    }
     }else{
-	PrintToLog("tx in %d blockHeight, is not in valid range [%d, %d]\n", block, params.GENESIS_BLOCK, params.LAST_EXODUS_BLOCK);
+	    PrintToLog("tx in %d blockHeight, is not in valid range [%d, %d]\n", block, params.GENESIS_BLOCK, params.LAST_EXODUS_BLOCK);
 	}
 
     return PKT_ERROR_BURN - 2;
 }
+
+int CMPTransaction::logicMath_ERC721(){
+
+    switch (erc721_action){
+        case ERC721Action::ISSUE_ERC721_PROPERTY :
+            return logicMath_ERC721_issueproperty();
+
+        case ERC721Action::ISSUE_ERC721_TOKEN :
+            return logicMath_ERC721_issuetoken();
+
+        case ERC721Action::TRANSFER_REC721_TOKEN :
+            return logicMath_ERC721_transfertoken();
+
+        case ERC721Action::DESTROY_ERC721_TOKEN :
+            return logicMath_ERC721_destroytoken();
+    }
+
+    return PKT_ERROR_ERC721 - 1;
+}
+
+int CMPTransaction::logicMath_ERC721_issueproperty(){
+
+    return PKT_ERROR_ERC721 - 100;
+}
+
+int CMPTransaction::logicMath_ERC721_issuetoken(){
+
+    return PKT_ERROR_ERC721 - 200;
+}
+
+int CMPTransaction::logicMath_ERC721_transfertoken(){
+
+    return PKT_ERROR_ERC721 - 300;
+}
+
+int CMPTransaction::logicMath_ERC721_destroytoken(){
+
+    return PKT_ERROR_ERC721 - 400;
+}
+
 
 /** Passive effect of crowdsale participation. */
 /*

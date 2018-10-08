@@ -36,7 +36,7 @@ std::vector<uint8_t> insecure_GetRandomByteArray(FastRandomContext &rand,
     }
     return out;
 }
-/*
+
 class DstTypeChecker : public boost::static_visitor<void> {
 public:
     void operator()(const CKeyID &id) { isKey = true; }
@@ -60,7 +60,7 @@ private:
     bool isKey;
     bool isScript;
 };
-*/
+
 // Map all possible size bits in the version to the expected size of the
 // hash in bytes.
 const std::array<std::pair<uint8_t, uint32_t>, 8> valid_sizes = {

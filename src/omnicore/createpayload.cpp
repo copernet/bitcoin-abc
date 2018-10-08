@@ -400,30 +400,6 @@ std::vector<unsigned char> CreatePayload_FreezeTokens(uint32_t propertyId, uint6
     payload.insert(payload.end(), address.begin(), address.end());
     payload.push_back('\0');
 
-/*
-    if(DstTypeChecker::IsScriptDst(dest))
-    {
-        //P2SH address set version flag 1
-        payload.push_back(1);
-
-        addressBytes = DstAddrtohex::IsScriptDst(dest);
-        //CScriptID script = static_cast<CScriptID>(dest);
-        //addressBytes = script.GetHex();
-        payload.insert(payload.end(), addressBytes.begin(), addressBytes.end());
-    }else if(DstTypeChecker::IsKeyDst(dest))
-    {
-        //P2PKH address set version flag 0
-        payload.push_back(0);
-        addressBytes = DstAddrtohex::IsScriptDst(dest);
-        //CKeyID key = static_cast<CScriptID>(dest);
-        //addressBytes = key.GetHex();
-        payload.insert(payload.end(), addressBytes.begin(), addressBytes.end());
-    }else
-    {
-        //other address set version flag 0xff
-        payload.push_back(0xff);
-    }
-*/
     return payload;
 }
 
@@ -447,29 +423,7 @@ std::vector<unsigned char> CreatePayload_UnfreezeTokens(uint32_t propertyId, uin
     //std::string addressBytes;
     payload.insert(payload.end(), address.begin(), address.end());
     payload.push_back('\0');
-/*
-    if(DstTypeChecker::IsScriptDst(dest))
-    {
-        //P2SH address set version flag 1
-        payload.push_back(1);
-        addressBytes = DstAddrtohex::IsScriptDst(dest);
-        //CScriptID script = static_cast<CScriptID>(dest);
-        //addressBytes = script.GetHex();
-        payload.insert(payload.end(), addressBytes.begin(), addressBytes.end());
-    }else if(DstTypeChecker::IsKeyDst(dest))
-    {
-        //P2PKH address set version flag 0
-        payload.push_back(0);
-        addressBytes = DstAddrtohex::IsScriptDst(dest);
-        //CKeyID key = static_cast<CScriptID>(dest);
-        //addressBytes = key.GetHex();
-        payload.insert(payload.end(), addressBytes.begin(), addressBytes.end());
-    }else
-    {
-        //other address set version flag 0xff
-        payload.push_back(0xff);
-    }
-*/
+
     return payload;
 }
 

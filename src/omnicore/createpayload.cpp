@@ -390,15 +390,17 @@ std::vector<unsigned char> CreatePayload_FreezeTokens(uint32_t propertyId, uint6
     mastercore::swapByteOrder16(messageVer);
     mastercore::swapByteOrder32(propertyId);
     mastercore::swapByteOrder64(amount);
-    const CChainParams& params = GetConfig().GetChainParams();
-    CTxDestination dest = DecodeCashAddr(address, params);
+    //const CChainParams& params = GetConfig().GetChainParams();
+    //CTxDestination dest = DecodeCashAddr(address, params);
 
     PUSH_BACK_BYTES(payload, messageVer);
     PUSH_BACK_BYTES(payload, messageType);
     PUSH_BACK_BYTES(payload, propertyId);
     PUSH_BACK_BYTES(payload, amount);
-    std::string addressBytes;
+    payload.insert(payload.end(), address.begin(), address.end());
+    payload.push_back('\0');
 
+/*
     if(DstTypeChecker::IsScriptDst(dest))
     {
         //P2SH address set version flag 1
@@ -421,7 +423,7 @@ std::vector<unsigned char> CreatePayload_FreezeTokens(uint32_t propertyId, uint6
         //other address set version flag 0xff
         payload.push_back(0xff);
     }
-
+*/
     return payload;
 }
 
@@ -434,16 +436,18 @@ std::vector<unsigned char> CreatePayload_UnfreezeTokens(uint32_t propertyId, uin
     mastercore::swapByteOrder16(messageVer);
     mastercore::swapByteOrder32(propertyId);
     mastercore::swapByteOrder64(amount);
-    const CChainParams& params = GetConfig().GetChainParams();
-    CTxDestination dest = DecodeCashAddr(address, params);
+    //const CChainParams& params = GetConfig().GetChainParams();
+    //CTxDestination dest = DecodeCashAddr(address, params);
     //std::vector<unsigned char> addressBytes = dest.GetHex();
 
     PUSH_BACK_BYTES(payload, messageVer);
     PUSH_BACK_BYTES(payload, messageType);
     PUSH_BACK_BYTES(payload, propertyId);
     PUSH_BACK_BYTES(payload, amount);
-    std::string addressBytes;
-
+    //std::string addressBytes;
+    payload.insert(payload.end(), address.begin(), address.end());
+    payload.push_back('\0');
+/*
     if(DstTypeChecker::IsScriptDst(dest))
     {
         //P2SH address set version flag 1
@@ -465,7 +469,7 @@ std::vector<unsigned char> CreatePayload_UnfreezeTokens(uint32_t propertyId, uin
         //other address set version flag 0xff
         payload.push_back(0xff);
     }
-
+*/
     return payload;
 }
 

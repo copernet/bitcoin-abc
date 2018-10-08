@@ -743,7 +743,7 @@ bool CMPTransaction::interpret_DisableFreezing()
 //#if 0
 bool CMPTransaction::interpret_FreezeTokens()
 {
-    if (pkt_size < 37) {
+    if (pkt_size < 17) {
         return false;
     }
     memcpy(&property, &pkt[4], 4);
@@ -752,36 +752,21 @@ bool CMPTransaction::interpret_FreezeTokens()
     swapByteOrder64(nValue);
     nNewValue = nValue;
 
-    /**
-        Note, TX185 is a virtual reference transaction type.
-              With virtual reference transactions a hash160 in the payload sets the receiver.
-              Reference outputs are ignored.
-    **/
-    unsigned char address_version;
-    uint160 address_hash160;
-    memcpy(&address_version, &pkt[16], 1);
-    memcpy(&address_hash160, &pkt[17], 20);
+    const CChainParams &param = GetConfig().GetChainParams();
+    const char* destaddr = (char*)&pkt[16];
+    UniValue unfreezaddr(destaddr);
 
-    CTxDestination dest;
-    const CChainParams& params = GetConfig().GetChainParams();
-
-    if(address_version == P2PKH_TYPE)
-    {
-        dest = CKeyID(address_hash160);
-    }
-    else if(address_version == P2SH_TYPE)
-    {
-        dest = CScriptID(address_hash160);
-    }
-    else
-    {
+    CTxDestination addr = DecodeCashAddr(unfreezaddr.get_str(), param);
+    CTxDestination comAddr = CNoDestination{};
+    if (addr == comAddr){
         return false;
     }
+    receiver = EncodeCashAddr(addr, param);
 
-    receiver = EncodeCashAddr(dest, params);
     if (receiver.empty()) {
         return false;
     }
+
     if ((!rpcOnly && msc_debug_packets) || msc_debug_packets_readonly) {
         PrintToLog("\t        property: %d (%s)\n", property, strMPProperty(property));
         PrintToLog("\t  value (unused): %s\n", FormatMP(property, nValue));
@@ -802,34 +787,16 @@ bool CMPTransaction::interpret_UnfreezeTokens()
     memcpy(&nValue, &pkt[8], 8);
     swapByteOrder64(nValue);
     nNewValue = nValue;
+    const CChainParams &param = GetConfig().GetChainParams();
+    const char* destaddr = (char*)&pkt[16];
+    UniValue unfreezaddr(destaddr);
 
-    /**
-        Note, TX186 virtual reference transaction type.
-              With virtual reference transactions a hash160 in the payload sets the receiver.
-              Reference outputs are ignored.
-    **/
-    unsigned char address_version;
-    uint160 address_hash160;
-    memcpy(&address_version, &pkt[16], 1);
-    memcpy(&address_hash160, &pkt[17], 20);
-
-    CTxDestination dest;
-    const CChainParams& params = GetConfig().GetChainParams();
-
-    if(address_version == P2PKH_TYPE)
-    {
-        dest = CKeyID(address_hash160);
-    }
-    else if(address_version == P2SH_TYPE)
-    {
-        dest = CScriptID(address_hash160);
-    }
-    else
-    {
+    CTxDestination addr = DecodeCashAddr(unfreezaddr.get_str(), param);
+    CTxDestination comAddr = CNoDestination{};
+    if (addr == comAddr){
         return false;
     }
-
-    receiver = EncodeCashAddr(dest, params);
+    receiver = EncodeCashAddr(addr, param);
 
     if (receiver.empty()) {
         return false;
@@ -2602,17 +2569,21 @@ int CMPTransaction::logicMath_FreezeTokens()
         PrintToLog("%s(): rejected: sender %s is not issuer of property %d [issuer=%s]\n", __func__, sender, property, sp.issuer);
         return (PKT_ERROR_TOKENS -43);
     }
-
+    if(sender == receiver)
+    {
+        PrintToLog("%s(): rejected: freezed address %s cannot be the same with the issuer %s\n", __func__, receiver, sender);
+        return (PKT_ERROR_TOKENS -43);
+    }
     if (!isFreezingEnabled(property, block)) {
         PrintToLog("%s(): rejected: freezing is not enabled for property %d\n", __func__, property);
         return (PKT_ERROR_TOKENS -47);
     }
-
+/*
     if (isAddressFrozen(receiver, property)) {
         PrintToLog("%s(): rejected: address %s is already frozen for property %d\n", __func__, receiver, property);
         return (PKT_ERROR_TOKENS -50);
     }
-
+*/
     freezeAddress(receiver, property);
 
     return 0;
@@ -2660,17 +2631,21 @@ int CMPTransaction::logicMath_UnfreezeTokens()
         PrintToLog("%s(): rejected: sender %s is not issuer of property %d [issuer=%s]\n", __func__, sender, property, sp.issuer);
         return (PKT_ERROR_TOKENS -43);
     }
-
+    if(sender == receiver)
+    {
+        PrintToLog("%s(): rejected: unfreezed address %s cannot be the same with the issuer %s\n", __func__, receiver, sender);
+        return (PKT_ERROR_TOKENS -43);
+    }
     if (!isFreezingEnabled(property, block)) {
         PrintToLog("%s(): rejected: freezing is not enabled for property %d\n", __func__, property);
         return (PKT_ERROR_TOKENS -47);
     }
-
+/*
     if (!isAddressFrozen(receiver, property)) {
         PrintToLog("%s(): rejected: address %s is not frozen for property %d\n", __func__, receiver, property);
         return (PKT_ERROR_TOKENS -48);
     }
-
+*/
     unfreezeAddress(receiver, property);
 
     return 0;

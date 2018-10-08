@@ -254,7 +254,7 @@ CRegTestConsensusParams::CRegTestConsensusParams()
     MAX_ACTIVATION_BLOCKS = 10;
     // Waiting period for enabling freezing
     OMNI_FREEZE_WAIT_PERIOD = 10;
-    WHC_FREEZENACTIVATE_BLOCK = 10;
+    WHC_FREEZENACTIVATE_BLOCK = 0;
     // Script related:
     PUBKEYHASH_BLOCK = 0;
     SCRIPTHASH_BLOCK = 0;

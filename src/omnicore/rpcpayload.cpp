@@ -685,7 +685,7 @@ UniValue whc_createpayload_freeze(const Config &config,const JSONRPCRequest &req
             "\nArguments:\n"
             "1. toaddress            (string, required) the address to freeze tokens for\n"
             "2. propertyid           (number, required) the property to freeze tokens for (must be managed type and have freezing option enabled)\n"
-            "3. amount               (number, required) the amount of tokens to freeze (note: this is unused - once frozen an address cannot send any transactions)\n"
+            "3. amount               (string, required) the amount of tokens to freeze (note: this is unused - once frozen an address cannot send any transactions)\n"
 
             "\nResult:\n"
             "\"payload\"             (string) the hex-encoded payload\n"
@@ -694,8 +694,9 @@ UniValue whc_createpayload_freeze(const Config &config,const JSONRPCRequest &req
             + HelpExampleCli("whc_createpayload_freeze", "\"3HTHRxu3aSDV4deakjC7VmsiUp7c6dfbvs\" 1 0")
             + HelpExampleRpc("whc_createpayload_freeze", "\"3HTHRxu3aSDV4deakjC7VmsiUp7c6dfbvs\", 1, 0")
         );
-std::cout << "should be string : " << request.params[0].get_str() << "\n";
+
     std::string refAddress = ParseAddress(request.params[0]);
+
     uint32_t propertyId = ParsePropertyId(request.params[1]);
     int64_t amount = ParseAmount(request.params[2], getPropertyType(propertyId));
 
@@ -718,7 +719,7 @@ UniValue whc_createpayload_unfreeze(const Config &config,const JSONRPCRequest &r
             "\nArguments:\n"
             "1. toaddress            (string, required) the address to unfreeze tokens for\n"
             "2. propertyid           (number, required) the property to unfreeze tokens for (must be managed type and have freezing option enabled)\n"
-            "3. amount               (number, required) the amount of tokens to unfreeze (note: this is unused)\n"
+            "3. amount               (string, required) the amount of tokens to unfreeze (note: this is unused)\n"
 
             "\nResult:\n"
             "\"payload\"             (string) the hex-encoded payload\n"
@@ -762,10 +763,10 @@ static const CRPCCommand commands[] =
 //    { "omni layer (payload creation)", "omni_createpayload_cancelalltrades",     &omni_createpayload_cancelalltrades,     true, {} },
 //    { "omni layer (payload creation)", "omni_createpayload_enablefreezing",      &omni_createpayload_enablefreezing,      true, {} },
 //    { "omni layer (payload creation)", "omni_createpayload_disablefreezing",     &omni_createpayload_disablefreezing,     true, {} },
-    { "omni layer (payload creation)", "whc_createpayload_freeze",              &whc_createpayload_freeze,              true, {} },
-    { "omni layer (payload creation)", "whc_createpayload_unfreeze",            &whc_createpayload_unfreeze,            true, {} },
     { "omni layer (payload creation)", "whc_createpayload_burnbch",             &whc_createpayload_burnbch,             true, {} },
     { "omni layer (payload creation)", "whc_createpayload_particrowdsale",             &whc_createpayload_particrowdsale,             true, {} },
+    { "omni layer (payload creation)", "whc_createpayload_freeze",              &whc_createpayload_freeze,              true, {} },
+    { "omni layer (payload creation)", "whc_createpayload_unfreeze",            &whc_createpayload_unfreeze,            true, {} },
 };
 
 void RegisterOmniPayloadCreationRPCCommands(CRPCTable &tableRPC)

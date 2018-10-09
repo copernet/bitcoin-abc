@@ -5,7 +5,6 @@
 #define BITCOIN_CASHADDRENC_H
 
 #include "script/standard.h"
-#include "pubkey.h"
 #include <string>
 #include <vector>
 
@@ -29,5 +28,4 @@ CashAddrContent DecodeCashAddrContent(const std::string &addr,
 CTxDestination DecodeCashAddrDestination(const CashAddrContent &content);
 
 std::vector<uint8_t> PackCashAddrContent(const CashAddrContent &content);
-
 #endif

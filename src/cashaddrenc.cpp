@@ -113,7 +113,6 @@ CashAddrContent DecodeCashAddrContent(const std::string &addr,
     std::string prefix;
     std::vector<uint8_t> payload;
     std::tie(prefix, payload) = cashaddr::Decode(addr, expectedPrefix);
-
     if (prefix != expectedPrefix) {
         return {};
     }

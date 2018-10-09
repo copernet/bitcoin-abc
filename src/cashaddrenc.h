@@ -5,7 +5,6 @@
 #define BITCOIN_CASHADDRENC_H
 
 #include "script/standard.h"
-
 #include <string>
 #include <vector>
 

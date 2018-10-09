@@ -140,8 +140,6 @@ bool BalanceToJSON(const std::string& address, uint32_t property, UniValue& bala
     nReserved += getMPbalance(address, property, METADEX_RESERVE);
     nReserved += getMPbalance(address, property, SELLOFFER_RESERVE);
 
-    int64_t nFrozen = getUserFrozenMPbalance(address, property);
-
     if (divisible) {
         balance_obj.push_back(Pair("balance", FormatDivisibleMP(nAvailable, divisible)));
         balance_obj.push_back(Pair("reserved", FormatDivisibleMP(nReserved, divisible)));
@@ -843,7 +841,7 @@ UniValue whc_getfrozenbalanceforid(const Config &config, const JSONRPCRequest &r
 {
     if (request.fHelp || request.params.size() != 1)
         throw runtime_error(
-                "whc_getfrozenbalanceforid \"address\" propertyid\n"
+                "whc_getfrozenbalanceforid  propertyid\n"
                 "\nReturns the frozen token balance for a given property.\n"
                 "\nArguments:\n"
                 "1. propertyid           (number, required) the property identifier\n"

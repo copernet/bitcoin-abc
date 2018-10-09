@@ -137,6 +137,7 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     { "whc_getgrants", 0, "" },
     { "whc_getbalance", 1, "" },
     { "whc_getfrozenbalance", 1, "" },
+    { "whc_getfrozenbalanceforid", 0, "" },
     { "whc_getproperty", 0, "" },
     { "whc_listtransactions", 1, "" },
     { "whc_listtransactions", 2, "" },

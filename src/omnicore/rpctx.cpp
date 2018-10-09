@@ -169,6 +169,11 @@ UniValue whc_send(const Config &config,const JSONRPCRequest &request)
 
     // perform checks
     RequireBalance(fromAddress, propertyId, amount);
+    /*
+    if (isAddressFrozen(fromAddress, propertyId))
+    {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Sender has been frozen");
+    }*/
     RequireSaneReferenceAmount(referenceAmount);
 
     // create a payload for the transaction
@@ -225,7 +230,11 @@ UniValue whc_sendall(const Config &config,const JSONRPCRequest &request)
     // perform checks
     RequirePropertyEcosystem(ecosystem);
     RequireSaneReferenceAmount(referenceAmount);
-
+    /*
+    if (isAddressFrozen(fromAddress, propertyId))
+    {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Sender has been frozen");
+    }*/
     // create a payload for the transaction
     std::vector<unsigned char> payload = CreatePayload_SendAll(ecosystem);
 
@@ -762,22 +771,22 @@ UniValue whc_burnbchgetwhc(const Config &config,const JSONRPCRequest &request)
 UniValue whc_sendfreeze(const Config &config,const JSONRPCRequest &request) {
     if (request.fHelp || request.params.size() != 4 )
         throw runtime_error(
-                "whc_sendrevoke \"fromaddress\" propertyid \"amount\" ( \"memo\" )\n"
+                "whc_sendfreeze \"fromaddress\" propertyid \"amount\"  \"frozenaddress\" \n"
 
                 "\nRevoke units of managed tokens.\n"
 
                 "\nArguments:\n"
-                "1. fromaddress          (string, required) the address to revoke the tokens from\n"
-                "2. propertyid           (number, required) the identifier of the tokens to revoke\n"
-                "3. amount               (string, required) the amount of tokens to revoke\n"
-                "4. freezedaddress       (string, optional) a text note attached to this transaction (none by default)\n"
+                "1. fromaddress          (string, required) the address to send from\n"
+                "2. propertyid           (number, required) the identifier of the tokens to freeze\n"
+                "3. amount               (string, required) the amount of tokens to freeze (not used for now)\n"
+                "4. frozenaddress        (string, required) the address to be frozen\n"
 
                 "\nResult:\n"
                 "\"hash\"                  (string) the hex-encoded transaction hash\n"
 
                 "\nExamples:\n"
-                + HelpExampleCli("whc_sendrevoke", "\"qq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\", 51 \"100\"")
-                + HelpExampleRpc("whc_sendrevoke", "\"qq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\", 51, \"100\"")
+                + HelpExampleCli("whc_sendfreeze", "\"qq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\", 51 \"100\", \"kq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\"")
+                + HelpExampleRpc("whc_sendfreeze", "\"qq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\", 52, \"100\", \"kq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\"")
         );
 
     // obtain parameters & info
@@ -788,7 +797,7 @@ UniValue whc_sendfreeze(const Config &config,const JSONRPCRequest &request) {
     std::string freezedAddress = ParseAddress(request.params[3]);
 
     // perform checks
-    RequireExistingProperty(propertyId);
+
     RequireManagedProperty(propertyId);
     RequireTokenIssuer(fromAddress, propertyId);
 
@@ -821,22 +830,22 @@ UniValue whc_sendfreeze(const Config &config,const JSONRPCRequest &request) {
 UniValue whc_sendunfreeze(const Config &config,const JSONRPCRequest &request) {
     if (request.fHelp || request.params.size() != 4 )
         throw runtime_error(
-                "whc_sendrevoke \"fromaddress\" propertyid \"amount\" ( \"memo\" )\n"
+                "whc_sendunfreeze \"fromaddress\" propertyid \"amount\" \"frozenaddress\" \n"
 
                 "\nRevoke units of managed tokens.\n"
 
                 "\nArguments:\n"
-                "1. fromaddress          (string, required) the address to revoke the tokens from\n"
-                "2. propertyid           (number, required) the identifier of the tokens to revoke\n"
-                "3. amount               (string, required) the amount of tokens to revoke\n"
-                "4. freezedaddress       (string, optional) a text note attached to this transaction (none by default)\n"
+                "1. fromaddress          (string, required) the address to send from\n"
+                "2. propertyid           (number, required) the identifier of the tokens to unfreeze\n"
+                "3. amount               (string, required) the amount of tokens to unfreeze\n"
+                "4. frozenaddress        (string, required) the address has been frozen\n"
 
                 "\nResult:\n"
                 "\"hash\"                  (string) the hex-encoded transaction hash\n"
 
                 "\nExamples:\n"
-                + HelpExampleCli("whc_sendrevoke", "\"qq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\", 51 \"100\"")
-                + HelpExampleRpc("whc_sendrevoke", "\"qq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\", 51, \"100\"")
+                + HelpExampleCli("whc_sendunfreeze", "\"qq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\", 51 \"100\", \"qq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\"")
+                + HelpExampleRpc("whc_sendunfreeze", "\"qq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\", 52, \"100\", \"qq6tftuhukdagy5tthhnnx7xk9awhyc49us2h08xj4\"")
         );
 
     // obtain parameters & info

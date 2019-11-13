@@ -61,7 +61,7 @@ public:
 
     template <typename Stream> void Unserialize(Stream &s) {
         ::Unserialize(s, VARINT(nHeightAndIsCoinBase));
-        ::Unserialize(s, REF(CTxOutCompressor(out)));
+        ::Unserialize(s, CTxOutCompressor(out));
     }
 
     size_t DynamicMemoryUsage() const {
@@ -138,11 +138,14 @@ private:
 /** Abstract view on the open txout dataset. */
 class CCoinsView {
 public:
-    //! Retrieve the Coin (unspent transaction output) for a given outpoint.
+    /**
+     * Retrieve the Coin (unspent transaction output) for a given outpoint.
+     * Returns true only when an unspent coin was found, which is returned in
+     * coin. When false is returned, coin's value is unspecified.
+     */
     virtual bool GetCoin(const COutPoint &outpoint, Coin &coin) const;
 
-    //! Just check whether we have data for a given outpoint.
-    //! This may (but cannot always) return true for spent outputs.
+    //! Just check whether a given outpoint is unspent.
     virtual bool HaveCoin(const COutPoint &outpoint) const;
 
     //! Retrieve the block hash whose state this CCoinsView currently represents
@@ -204,6 +207,12 @@ protected:
 public:
     CCoinsViewCache(CCoinsView *baseIn);
 
+    /**
+     * By deleting the copy constructor, we prevent accidentally using it when
+     * one intends to create a cache on top of a base cache.
+     */
+    CCoinsViewCache(const CCoinsViewCache &) = delete;
+
     // Standard CCoinsView methods
     bool GetCoin(const COutPoint &outpoint, Coin &coin) const override;
     bool HaveCoin(const COutPoint &outpoint) const override;
@@ -223,9 +232,14 @@ public:
     bool HaveCoinInCache(const COutPoint &outpoint) const;
 
     /**
-     * Return a reference to a Coin in the cache, or a pruned one if not found.
-     * This is more efficient than GetCoin. Modifications to other cache entries
-     * are allowed while accessing the returned pointer.
+     * Return a reference to Coin in the cache, or a pruned one if not found.
+     * This is more efficient than GetCoin.
+     *
+     * Generally, do not hold the reference returned for more than a short
+     * scope. While the current implementation allows for modifications to the
+     * contents of the cache while holding the reference, this behavior should
+     * not be relied on! To be safe, best to not hold the returned reference
+     * through any other calls to this cache.
      */
     const Coin &AccessCoin(const COutPoint &output) const;
 

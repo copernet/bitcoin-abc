@@ -7,10 +7,11 @@
 #include <primitives/block.h>
 #include <primitives/transaction.h>
 #include <script/script.h>
+#include <script/sign.h>
 #include <serialize.h>
 #include <streams.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 #include <version.h>
 
 #include <boost/algorithm/string/classification.hpp>
@@ -179,6 +180,29 @@ CScript ParseScript(const std::string &s) {
     return result;
 }
 
+// Check that all of the input and output scripts of a transaction contains
+// valid opcodes
+bool CheckTxScriptsSanity(const CMutableTransaction &tx) {
+    // Check input scripts for non-coinbase txs
+    if (!CTransaction(tx).IsCoinBase()) {
+        for (const auto &i : tx.vin) {
+            if (!i.scriptSig.HasValidOps() ||
+                i.scriptSig.size() > MAX_SCRIPT_SIZE) {
+                return false;
+            }
+        }
+    }
+    // Check output scripts
+    for (const auto &o : tx.vout) {
+        if (!o.scriptPubKey.HasValidOps() ||
+            o.scriptPubKey.size() > MAX_SCRIPT_SIZE) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool DecodeHexTx(CMutableTransaction &tx, const std::string &strHexTx) {
     if (!IsHex(strHexTx)) {
         return false;
@@ -189,13 +213,28 @@ bool DecodeHexTx(CMutableTransaction &tx, const std::string &strHexTx) {
     CDataStream ssData(txData, SER_NETWORK, PROTOCOL_VERSION);
     try {
         ssData >> tx;
-        if (!ssData.empty()) {
-            return false;
+        if (ssData.eof() && CheckTxScriptsSanity(tx)) {
+            return true;
         }
-    } catch (const std::exception &) {
+    } catch (const std::exception &e) {
+        // Fall through.
+    }
+
+    return false;
+}
+
+bool DecodeHexBlockHeader(CBlockHeader &header, const std::string &hex_header) {
+    if (!IsHex(hex_header)) {
         return false;
     }
 
+    const std::vector<uint8_t> header_data{ParseHex(hex_header)};
+    CDataStream ser_header(header_data, SER_NETWORK, PROTOCOL_VERSION);
+    try {
+        ser_header >> header;
+    } catch (const std::exception &) {
+        return false;
+    }
     return true;
 }
 
@@ -215,14 +254,21 @@ bool DecodeHexBlk(CBlock &block, const std::string &strHexBlk) {
     return true;
 }
 
-uint256 ParseHashUV(const UniValue &v, const std::string &strName) {
-    std::string strHex;
-    if (v.isStr()) {
-        strHex = v.getValStr();
+bool DecodePSBT(PartiallySignedTransaction &psbt, const std::string &base64_tx,
+                std::string &error) {
+    std::vector<uint8_t> tx_data = DecodeBase64(base64_tx.c_str());
+    CDataStream ss_data(tx_data, SER_NETWORK, PROTOCOL_VERSION);
+    try {
+        ss_data >> psbt;
+        if (!ss_data.empty()) {
+            error = "extra data after PSBT";
+            return false;
+        }
+    } catch (const std::exception &e) {
+        error = e.what();
+        return false;
     }
-
-    // Note: ParseHashStr("") throws a runtime_error
-    return ParseHashStr(strHex, strName);
+    return true;
 }
 
 uint256 ParseHashStr(const std::string &strHex, const std::string &strName) {

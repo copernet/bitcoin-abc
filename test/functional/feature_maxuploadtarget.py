@@ -2,28 +2,27 @@
 # Copyright (c) 2015-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
-'''
-Test behavior of -maxuploadtarget.
+"""Test behavior of -maxuploadtarget.
 
 * Verify that getdata requests for old blocks (>1week) are dropped
 if uploadtarget has been reached.
-* Verify that getdata requests for recent blocks are respecteved even
+* Verify that getdata requests for recent blocks are respected even
 if uploadtarget has been reached.
 * Verify that the upload counters are reset after 24 hours.
-'''
+"""
+
 from collections import defaultdict
 import time
 
 from test_framework.cdefs import LEGACY_MAX_BLOCK_SIZE
 from test_framework.blocktools import mine_big_block
 from test_framework.messages import CInv, msg_getdata
-from test_framework.mininode import network_thread_start, P2PInterface
+from test_framework.mininode import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
 
 
-class TestNode(P2PInterface):
+class TestP2PConn(P2PInterface):
     def __init__(self):
         super().__init__()
         self.block_receive_map = defaultdict(int)
@@ -63,13 +62,7 @@ class MaxUploadTest(BitcoinTestFramework):
         p2p_conns = []
 
         for _ in range(3):
-            p2p_conns.append(self.nodes[0].add_p2p_connection(TestNode()))
-
-        network_thread_start()
-        for p2pc in p2p_conns:
-            p2pc.wait_for_verack()
-
-        # Test logic begins here
+            p2p_conns.append(self.nodes[0].add_p2p_connection(TestP2PConn()))
 
         # Now mine a big block
         mine_big_block(self.nodes[0], self.utxo_cache)
@@ -158,10 +151,7 @@ class MaxUploadTest(BitcoinTestFramework):
                             "-maxuploadtarget=1", "-blockmaxsize=999000"])
 
         # Reconnect to self.nodes[0]
-        self.nodes[0].add_p2p_connection(TestNode())
-
-        network_thread_start()
-        self.nodes[0].p2p.wait_for_verack()
+        self.nodes[0].add_p2p_connection(TestP2PConn())
 
         # retrieve 20 blocks which should be enough to break the 1MB limit
         getdata_request.inv = [CInv(2, big_new_block)]

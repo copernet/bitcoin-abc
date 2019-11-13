@@ -64,6 +64,9 @@ DummyConfig::DummyConfig()
 DummyConfig::DummyConfig(std::string net)
     : chainParams(CreateChainParams(net)) {}
 
+DummyConfig::DummyConfig(std::unique_ptr<CChainParams> chainParamsIn)
+    : chainParams(std::move(chainParamsIn)) {}
+
 void DummyConfig::SetChainParams(std::string net) {
     chainParams = CreateChainParams(net);
 }
@@ -74,14 +77,6 @@ void GlobalConfig::SetExcessUTXOCharge(Amount fee) {
 
 Amount GlobalConfig::GetExcessUTXOCharge() const {
     return excessUTXOCharge;
-}
-
-void GlobalConfig::SetMinFeePerKB(CFeeRate fee) {
-    feePerKB = fee;
-}
-
-CFeeRate GlobalConfig::GetMinFeePerKB() const {
-    return feePerKB;
 }
 
 void GlobalConfig::SetRPCUserAndPassword(std::string userAndPassword) {

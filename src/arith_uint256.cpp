@@ -7,13 +7,16 @@
 
 #include <crypto/common.h>
 #include <uint256.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
 
 #include <cstdio>
 #include <cstring>
 
 template <unsigned int BITS>
 base_uint<BITS>::base_uint(const std::string &str) {
+    static_assert(BITS / 32 > 0 && BITS % 32 == 0,
+                  "Template parameter BITS must be a positive multiple of 32.");
+
     SetHex(str);
 }
 
@@ -60,16 +63,16 @@ base_uint<BITS> &base_uint<BITS>::operator*=(uint32_t b32) {
 
 template <unsigned int BITS>
 base_uint<BITS> &base_uint<BITS>::operator*=(const base_uint &b) {
-    base_uint<BITS> a = *this;
-    *this = 0;
+    base_uint<BITS> a;
     for (int j = 0; j < WIDTH; j++) {
         uint64_t carry = 0;
         for (int i = 0; i + j < WIDTH; i++) {
-            uint64_t n = carry + pn[i + j] + (uint64_t)a.pn[j] * b.pn[i];
-            pn[i + j] = n & 0xffffffff;
+            uint64_t n = carry + a.pn[i + j] + (uint64_t)pn[j] * b.pn[i];
+            a.pn[i + j] = n & 0xffffffff;
             carry = n >> 32;
         }
     }
+    *this = a;
     return *this;
 }
 
@@ -152,7 +155,7 @@ template <unsigned int BITS> unsigned int base_uint<BITS>::bits() const {
     for (int pos = WIDTH - 1; pos >= 0; pos--) {
         if (pn[pos]) {
             for (int nbits = 31; nbits > 0; nbits--) {
-                if (pn[pos] & 1 << nbits) {
+                if (pn[pos] & 1U << nbits) {
                     return 32 * pos + nbits + 1;
                 }
             }

@@ -6,28 +6,29 @@ bin_PROGRAMS += bench/bench_wormhole
 BENCH_SRCDIR = bench
 BENCH_BINARY = bench/bench_wormhole$(EXEEXT)
 
-RAW_TEST_FILES = \
+RAW_BENCH_FILES = \
   bench/data/block413567.raw
-GENERATED_TEST_FILES = $(RAW_TEST_FILES:.raw=.raw.h)
+GENERATED_BENCH_FILES = $(RAW_BENCH_FILES:.raw=.raw.h)
 
 bench_bench_wormhole_SOURCES = \
+  $(RAW_BENCH_FILES) \
   bench/bench_bitcoin.cpp \
   bench/bench.cpp \
   bench/bench.h \
   bench/cashaddr.cpp \
   bench/checkblock.cpp \
   bench/checkqueue.cpp \
-  bench/Examples.cpp \
+  bench/examples.cpp \
   bench/rollingbloom.cpp \
+  bench/crypto_aes.cpp \
   bench/crypto_hash.cpp \
   bench/ccoins_caching.cpp \
   bench/gcs_filter.cpp \
   bench/merkle_root.cpp \
   bench/mempool_eviction.cpp \
+  bench/rpc_mempool.cpp \
   bench/base58.cpp \
   bench/lockedpool.cpp \
-  bench/perf.cpp \
-  bench/perf.h \
   bench/prevector.cpp
 
 nodist_bench_bench_wormhole_SOURCES = $(GENERATED_TEST_FILES)
@@ -36,6 +37,7 @@ bench_bench_wormhole_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(EVENT_CLFAG
 bench_bench_wormhole_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 bench_bench_wormhole_LDADD = \
   $(LIBBITCOIN_SERVER) \
+  $(LIBBITCOIN_WALLET) \
   $(LIBBITCOIN_COMMON) \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CONSENSUS) \
@@ -44,7 +46,9 @@ bench_bench_wormhole_LDADD = \
   $(LIBLEVELDB_SSE42) \
   $(LIBMEMENV) \
   $(LIBSECP256K1) \
-  $(LIBUNIVALUE)
+  $(LIBUNIVALUE) \
+  $(EVENT_PTHREADS_LIBS) \
+  $(EVENT_LIBS)
 
 if ENABLE_ZMQ
 bench_bench_wormhole_LDADD += $(LIBBITCOIN_ZMQ) $(ZMQ_LIBS)
@@ -58,7 +62,7 @@ endif
 bench_bench_wormhole_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS)
 bench_bench_wormhole_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
 
-CLEAN_BITCOIN_BENCH = bench/*.gcda bench/*.gcno $(GENERATED_TEST_FILES)
+CLEAN_BITCOIN_BENCH = bench/*.gcda bench/*.gcno $(GENERATED_BENCH_FILES)
 
 CLEANFILES += $(CLEAN_BITCOIN_BENCH)
 

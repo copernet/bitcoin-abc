@@ -4,12 +4,12 @@
 
 #include <key.h>
 
-#include <base58.h>
-#include <dstencode.h>
+#include <chainparams.h> // For Params()
+#include <key_io.h>
 #include <script/script.h>
 #include <uint256.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <test/test_bitcoin.h>
 
@@ -46,7 +46,7 @@ std::vector<uint8_t> get_r_ECDSA(std::vector<uint8_t> sigECDSA) {
         assert(sigECDSA[4] == 0);
         std::copy(sigECDSA.begin() + 5, sigECDSA.begin() + 37, ret.begin());
     } else {
-        std::copy(sigECDSA.begin() + 4, sigECDSA.begin() + 36,
+        std::copy(sigECDSA.begin() + 4, sigECDSA.begin() + (4 + rlen),
                   ret.begin() + (32 - rlen));
     }
     return ret;
@@ -83,21 +83,16 @@ BOOST_AUTO_TEST_CASE(internal_test) {
 }
 
 BOOST_AUTO_TEST_CASE(key_test1) {
-    CBitcoinSecret bsecret1, bsecret2, bsecret1C, bsecret2C, baddress1;
-    BOOST_CHECK(bsecret1.SetString(strSecret1));
-    BOOST_CHECK(bsecret2.SetString(strSecret2));
-    BOOST_CHECK(bsecret1C.SetString(strSecret1C));
-    BOOST_CHECK(bsecret2C.SetString(strSecret2C));
-    BOOST_CHECK(!baddress1.SetString(strAddressBad));
-
-    CKey key1 = bsecret1.GetKey();
-    BOOST_CHECK(key1.IsCompressed() == false);
-    CKey key2 = bsecret2.GetKey();
-    BOOST_CHECK(key2.IsCompressed() == false);
-    CKey key1C = bsecret1C.GetKey();
-    BOOST_CHECK(key1C.IsCompressed() == true);
-    CKey key2C = bsecret2C.GetKey();
-    BOOST_CHECK(key2C.IsCompressed() == true);
+    CKey key1 = DecodeSecret(strSecret1);
+    BOOST_CHECK(key1.IsValid() && !key1.IsCompressed());
+    CKey key2 = DecodeSecret(strSecret2);
+    BOOST_CHECK(key2.IsValid() && !key2.IsCompressed());
+    CKey key1C = DecodeSecret(strSecret1C);
+    BOOST_CHECK(key1C.IsValid() && key1C.IsCompressed());
+    CKey key2C = DecodeSecret(strSecret2C);
+    BOOST_CHECK(key2C.IsValid() && key2C.IsCompressed());
+    CKey bad_key = DecodeSecret(strAddressBad);
+    BOOST_CHECK(!bad_key.IsValid());
 
     CPubKey pubkey1 = key1.GetPubKey();
     CPubKey pubkey2 = key2.GetPubKey();

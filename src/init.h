@@ -7,6 +7,8 @@
 #ifndef BITCOIN_INIT_H
 #define BITCOIN_INIT_H
 
+#include <util/system.h>
+
 #include <memory>
 #include <string>
 
@@ -17,7 +19,7 @@ class HTTPRPCRequestProcessor;
 class RPCServer;
 
 class WalletInitInterface;
-extern WalletInitInterface *const g_wallet_init_interface;
+extern const WalletInitInterface &g_wallet_init_interface;
 
 namespace boost {
 class thread_group;
@@ -47,7 +49,7 @@ bool AppInitBasicSetup();
  * @pre Parameters should be parsed and config file should be read,
  * AppInitBasicSetup should have been called.
  */
-bool AppInitParameterInteraction(Config &config, RPCServer &rpcServer);
+bool AppInitParameterInteraction(Config &config);
 /**
  * Initialization sanity checks: ecc init, sanity checks, dir lock.
  * @note This can be done before daemonization.
@@ -70,14 +72,14 @@ bool AppInitLockDataDirectory();
  * @pre Parameters should be parsed and config file should be read,
  * AppInitLockDataDirectory should have been called.
  */
-bool AppInitMain(Config &config,
+bool AppInitMain(Config &config, RPCServer &rpcServer,
                  HTTPRPCRequestProcessor &httpRPCRequestProcessor);
 
-/** The help message mode determines what help message to show */
-enum class HelpMessageMode { BITCOIND, BITCOIN_QT };
+/**
+ * Setup the arguments for gArgs.
+ */
+void SetupServerArgs();
 
-/** Help for options shared between UI and daemon (for -help) */
-std::string HelpMessage(HelpMessageMode mode);
 /** Returns licensing information (for -version) */
 std::string LicenseInfo();
 

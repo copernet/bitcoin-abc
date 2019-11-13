@@ -9,17 +9,18 @@
 #include <script/sign.h>
 
 #include <core_io.h>
-#include <data/script_tests.json.h>
 #include <key.h>
 #include <keystore.h>
 #include <rpc/server.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <streams.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #if defined(HAVE_CONSENSUS_LIB)
 #include <script/bitcoinconsensus.h>
 #endif
 
+#include <test/data/script_tests.json.h>
 #include <test/jsonutil.h>
 #include <test/scriptflags.h>
 #include <test/sigutil.h>
@@ -35,63 +36,67 @@
 #include <vector>
 
 // Uncomment if you want to output updated JSON tests.
-// #define UPDATE_JSON_TESTS
+#define UPDATE_JSON_TESTS
 
 static const uint32_t gFlags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC;
 
 struct ScriptErrorDesc {
-    ScriptError_t err;
+    ScriptError err;
     const char *name;
 };
 
 static ScriptErrorDesc script_errors[] = {
-    {SCRIPT_ERR_OK, "OK"},
-    {SCRIPT_ERR_UNKNOWN_ERROR, "UNKNOWN_ERROR"},
-    {SCRIPT_ERR_EVAL_FALSE, "EVAL_FALSE"},
-    {SCRIPT_ERR_OP_RETURN, "OP_RETURN"},
-    {SCRIPT_ERR_SCRIPT_SIZE, "SCRIPT_SIZE"},
-    {SCRIPT_ERR_PUSH_SIZE, "PUSH_SIZE"},
-    {SCRIPT_ERR_OP_COUNT, "OP_COUNT"},
-    {SCRIPT_ERR_STACK_SIZE, "STACK_SIZE"},
-    {SCRIPT_ERR_SIG_COUNT, "SIG_COUNT"},
-    {SCRIPT_ERR_PUBKEY_COUNT, "PUBKEY_COUNT"},
-    {SCRIPT_ERR_INVALID_OPERAND_SIZE, "OPERAND_SIZE"},
-    {SCRIPT_ERR_INVALID_NUMBER_RANGE, "INVALID_NUMBER_RANGE"},
-    {SCRIPT_ERR_IMPOSSIBLE_ENCODING, "IMPOSSIBLE_ENCODING"},
-    {SCRIPT_ERR_INVALID_SPLIT_RANGE, "SPLIT_RANGE"},
-    {SCRIPT_ERR_VERIFY, "VERIFY"},
-    {SCRIPT_ERR_EQUALVERIFY, "EQUALVERIFY"},
-    {SCRIPT_ERR_CHECKMULTISIGVERIFY, "CHECKMULTISIGVERIFY"},
-    {SCRIPT_ERR_CHECKSIGVERIFY, "CHECKSIGVERIFY"},
-    {SCRIPT_ERR_CHECKDATASIGVERIFY, "CHECKDATASIGVERIFY"},
-    {SCRIPT_ERR_NUMEQUALVERIFY, "NUMEQUALVERIFY"},
-    {SCRIPT_ERR_BAD_OPCODE, "BAD_OPCODE"},
-    {SCRIPT_ERR_DISABLED_OPCODE, "DISABLED_OPCODE"},
-    {SCRIPT_ERR_INVALID_STACK_OPERATION, "INVALID_STACK_OPERATION"},
-    {SCRIPT_ERR_INVALID_ALTSTACK_OPERATION, "INVALID_ALTSTACK_OPERATION"},
-    {SCRIPT_ERR_UNBALANCED_CONDITIONAL, "UNBALANCED_CONDITIONAL"},
-    {SCRIPT_ERR_NEGATIVE_LOCKTIME, "NEGATIVE_LOCKTIME"},
-    {SCRIPT_ERR_UNSATISFIED_LOCKTIME, "UNSATISFIED_LOCKTIME"},
-    {SCRIPT_ERR_SIG_HASHTYPE, "SIG_HASHTYPE"},
-    {SCRIPT_ERR_SIG_DER, "SIG_DER"},
-    {SCRIPT_ERR_MINIMALDATA, "MINIMALDATA"},
-    {SCRIPT_ERR_SIG_PUSHONLY, "SIG_PUSHONLY"},
-    {SCRIPT_ERR_SIG_HIGH_S, "SIG_HIGH_S"},
-    {SCRIPT_ERR_SIG_NULLDUMMY, "SIG_NULLDUMMY"},
-    {SCRIPT_ERR_PUBKEYTYPE, "PUBKEYTYPE"},
-    {SCRIPT_ERR_CLEANSTACK, "CLEANSTACK"},
-    {SCRIPT_ERR_MINIMALIF, "MINIMALIF"},
-    {SCRIPT_ERR_SIG_NULLFAIL, "NULLFAIL"},
-    {SCRIPT_ERR_SIG_BADLENGTH, "SIG_BADLENGTH"},
-    {SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS, "DISCOURAGE_UPGRADABLE_NOPS"},
-    {SCRIPT_ERR_NONCOMPRESSED_PUBKEY, "NONCOMPRESSED_PUBKEY"},
-    {SCRIPT_ERR_ILLEGAL_FORKID, "ILLEGAL_FORKID"},
-    {SCRIPT_ERR_MUST_USE_FORKID, "MISSING_FORKID"},
-    {SCRIPT_ERR_DIV_BY_ZERO, "DIV_BY_ZERO"},
-    {SCRIPT_ERR_MOD_BY_ZERO, "MOD_BY_ZERO"},
+    {ScriptError::OK, "OK"},
+    {ScriptError::UNKNOWN, "UNKNOWN_ERROR"},
+    {ScriptError::EVAL_FALSE, "EVAL_FALSE"},
+    {ScriptError::OP_RETURN, "OP_RETURN"},
+    {ScriptError::SCRIPT_SIZE, "SCRIPT_SIZE"},
+    {ScriptError::PUSH_SIZE, "PUSH_SIZE"},
+    {ScriptError::OP_COUNT, "OP_COUNT"},
+    {ScriptError::STACK_SIZE, "STACK_SIZE"},
+    {ScriptError::SIG_COUNT, "SIG_COUNT"},
+    {ScriptError::PUBKEY_COUNT, "PUBKEY_COUNT"},
+    {ScriptError::INVALID_OPERAND_SIZE, "OPERAND_SIZE"},
+    {ScriptError::INVALID_NUMBER_RANGE, "INVALID_NUMBER_RANGE"},
+    {ScriptError::IMPOSSIBLE_ENCODING, "IMPOSSIBLE_ENCODING"},
+    {ScriptError::INVALID_SPLIT_RANGE, "SPLIT_RANGE"},
+    {ScriptError::INVALID_BIT_COUNT, "INVALID_BIT_COUNT"},
+    {ScriptError::VERIFY, "VERIFY"},
+    {ScriptError::EQUALVERIFY, "EQUALVERIFY"},
+    {ScriptError::CHECKMULTISIGVERIFY, "CHECKMULTISIGVERIFY"},
+    {ScriptError::CHECKSIGVERIFY, "CHECKSIGVERIFY"},
+    {ScriptError::CHECKDATASIGVERIFY, "CHECKDATASIGVERIFY"},
+    {ScriptError::NUMEQUALVERIFY, "NUMEQUALVERIFY"},
+    {ScriptError::BAD_OPCODE, "BAD_OPCODE"},
+    {ScriptError::DISABLED_OPCODE, "DISABLED_OPCODE"},
+    {ScriptError::INVALID_STACK_OPERATION, "INVALID_STACK_OPERATION"},
+    {ScriptError::INVALID_ALTSTACK_OPERATION, "INVALID_ALTSTACK_OPERATION"},
+    {ScriptError::UNBALANCED_CONDITIONAL, "UNBALANCED_CONDITIONAL"},
+    {ScriptError::NEGATIVE_LOCKTIME, "NEGATIVE_LOCKTIME"},
+    {ScriptError::UNSATISFIED_LOCKTIME, "UNSATISFIED_LOCKTIME"},
+    {ScriptError::SIG_HASHTYPE, "SIG_HASHTYPE"},
+    {ScriptError::SIG_DER, "SIG_DER"},
+    {ScriptError::MINIMALDATA, "MINIMALDATA"},
+    {ScriptError::SIG_PUSHONLY, "SIG_PUSHONLY"},
+    {ScriptError::SIG_HIGH_S, "SIG_HIGH_S"},
+    {ScriptError::SIG_NULLDUMMY, "SIG_NULLDUMMY"},
+    {ScriptError::PUBKEYTYPE, "PUBKEYTYPE"},
+    {ScriptError::CLEANSTACK, "CLEANSTACK"},
+    {ScriptError::MINIMALIF, "MINIMALIF"},
+    {ScriptError::SIG_NULLFAIL, "NULLFAIL"},
+    {ScriptError::SIG_BADLENGTH, "SIG_BADLENGTH"},
+    {ScriptError::SIG_NONSCHNORR, "SIG_NONSCHNORR"},
+    {ScriptError::DISCOURAGE_UPGRADABLE_NOPS, "DISCOURAGE_UPGRADABLE_NOPS"},
+    {ScriptError::NONCOMPRESSED_PUBKEY, "NONCOMPRESSED_PUBKEY"},
+    {ScriptError::ILLEGAL_FORKID, "ILLEGAL_FORKID"},
+    {ScriptError::MUST_USE_FORKID, "MISSING_FORKID"},
+    {ScriptError::DIV_BY_ZERO, "DIV_BY_ZERO"},
+    {ScriptError::MOD_BY_ZERO, "MOD_BY_ZERO"},
+    {ScriptError::INVALID_BITFIELD_SIZE, "BITFIELD_SIZE"},
+    {ScriptError::INVALID_BIT_RANGE, "BIT_RANGE"},
 };
 
-const char *FormatScriptError(ScriptError_t err) {
+static const char *FormatScriptError(ScriptError err) {
     for (size_t i = 0; i < ARRAYLEN(script_errors); ++i) {
         if (script_errors[i].err == err) {
             return script_errors[i].name;
@@ -103,7 +108,7 @@ const char *FormatScriptError(ScriptError_t err) {
     return "";
 }
 
-ScriptError_t ParseScriptError(const std::string &name) {
+static ScriptError ParseScriptError(const std::string &name) {
     for (size_t i = 0; i < ARRAYLEN(script_errors); ++i) {
         if (script_errors[i].name == name) {
             return script_errors[i].err;
@@ -111,7 +116,7 @@ ScriptError_t ParseScriptError(const std::string &name) {
     }
 
     BOOST_ERROR("Unknown scripterror \"" << name << "\" in test description");
-    return SCRIPT_ERR_UNKNOWN_ERROR;
+    return ScriptError::UNKNOWN;
 }
 
 BOOST_FIXTURE_TEST_SUITE(script_tests, BasicTestingSetup)
@@ -134,7 +139,7 @@ BuildCreditingTransaction(const CScript &scriptPubKey, const Amount nValue) {
 
 static CMutableTransaction
 BuildSpendingTransaction(const CScript &scriptSig,
-                         const CMutableTransaction &txCredit) {
+                         const CTransaction &txCredit) {
     CMutableTransaction txSpend;
     txSpend.nVersion = 1;
     txSpend.nLockTime = 0;
@@ -150,16 +155,16 @@ BuildSpendingTransaction(const CScript &scriptSig,
 }
 
 static void DoTest(const CScript &scriptPubKey, const CScript &scriptSig,
-                   uint32_t flags, const std::string &message, int scriptError,
-                   const Amount nValue) {
-    bool expect = (scriptError == SCRIPT_ERR_OK);
+                   uint32_t flags, const std::string &message,
+                   ScriptError scriptError, const Amount nValue) {
+    bool expect = (scriptError == ScriptError::OK);
     if (flags & SCRIPT_VERIFY_CLEANSTACK) {
         flags |= SCRIPT_VERIFY_P2SH;
     }
 
     ScriptError err;
-    CMutableTransaction txCredit =
-        BuildCreditingTransaction(scriptPubKey, nValue);
+    const CTransaction txCredit{
+        BuildCreditingTransaction(scriptPubKey, nValue)};
     CMutableTransaction tx = BuildSpendingTransaction(scriptSig, txCredit);
     CMutableTransaction tx2 = tx;
     BOOST_CHECK_MESSAGE(VerifyScript(scriptSig, scriptPubKey, flags,
@@ -167,11 +172,10 @@ static void DoTest(const CScript &scriptPubKey, const CScript &scriptSig,
                                          &tx, 0, txCredit.vout[0].nValue),
                                      &err) == expect,
                         message);
-    BOOST_CHECK_MESSAGE(
-        err == scriptError,
-        std::string(FormatScriptError(err)) + " where " +
-            std::string(FormatScriptError((ScriptError_t)scriptError)) +
-            " expected: " + message);
+    BOOST_CHECK_MESSAGE(err == scriptError,
+                        std::string(FormatScriptError(err)) + " where " +
+                            std::string(FormatScriptError(scriptError)) +
+                            " expected: " + message);
 #if defined(HAVE_CONSENSUS_LIB)
     CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
     stream << tx2;
@@ -247,7 +251,7 @@ private:
     std::vector<uint8_t> push;
     std::string comment;
     uint32_t flags;
-    int scriptError;
+    ScriptError scriptError;
     Amount nValue;
 
     void DoPush() {
@@ -299,7 +303,7 @@ public:
                 uint32_t flags_, bool P2SH = false,
                 Amount nValue_ = Amount::zero())
         : script(script_), havePush(false), comment(comment_), flags(flags_),
-          scriptError(SCRIPT_ERR_OK), nValue(nValue_) {
+          scriptError(ScriptError::OK), nValue(nValue_) {
         CScript scriptPubKey = script;
         if (P2SH) {
             redeemscript = scriptPubKey;
@@ -312,7 +316,7 @@ public:
         spendTx = BuildSpendingTransaction(CScript(), *creditTx);
     }
 
-    TestBuilder &ScriptError(ScriptError_t err) {
+    TestBuilder &SetScriptError(ScriptError err) {
         scriptError = err;
         return *this;
     }
@@ -389,6 +393,82 @@ public:
         return *this;
     }
 
+    TestBuilder &PushECDSARecoveredPubKey(
+        const std::vector<uint8_t> &rdata, const std::vector<uint8_t> &sdata,
+        SigHashType sigHashType = SigHashType(), Amount amount = Amount::zero(),
+        uint32_t sigFlags = SCRIPT_ENABLE_SIGHASH_FORKID) {
+        // This calculates a pubkey to verify with a given ECDSA transaction
+        // signature.
+        uint256 hash = SignatureHash(script, CTransaction(spendTx), 0,
+                                     sigHashType, amount, nullptr, sigFlags);
+
+        assert(rdata.size() <= 32);
+        assert(sdata.size() <= 32);
+
+        // Our strategy: make a 'key recovery' signature, and just try all the
+        // recovery IDs. If none of them work then this means the 'r' value
+        // doesn't have any corresponding point, and the caller should pick a
+        // different r.
+        std::vector<uint8_t> vchSig(65, 0);
+        std::copy(rdata.begin(), rdata.end(),
+                  vchSig.begin() + (33 - rdata.size()));
+        std::copy(sdata.begin(), sdata.end(),
+                  vchSig.begin() + (65 - sdata.size()));
+
+        CPubKey key;
+        for (uint8_t recid : {0, 1, 2, 3}) {
+            vchSig[0] = 31 + recid;
+            if (key.RecoverCompact(hash, vchSig)) {
+                // found a match
+                break;
+            }
+        }
+        if (!key.IsValid()) {
+            throw std::runtime_error(
+                std::string("Could not generate pubkey for ") + HexStr(rdata));
+        }
+        std::vector<uint8_t> vchKey(key.begin(), key.end());
+
+        DoPush(vchKey);
+        return *this;
+    }
+
+    TestBuilder &
+    PushECDSASigFromParts(const std::vector<uint8_t> &rdata,
+                          const std::vector<uint8_t> &sdata,
+                          SigHashType sigHashType = SigHashType()) {
+        // Constructs a DER signature out of variable-length r and s arrays &
+        // adds hashtype byte.
+        assert(rdata.size() <= 32);
+        assert(sdata.size() <= 32);
+        assert(rdata.size() > 0);
+        assert(sdata.size() > 0);
+        assert(rdata[0] != 0);
+        assert(sdata[0] != 0);
+        std::vector<uint8_t> vchSig{0x30, 0x00, 0x02};
+        if (rdata[0] & 0x80) {
+            vchSig.push_back(rdata.size() + 1);
+            vchSig.push_back(0);
+            vchSig.insert(vchSig.end(), rdata.begin(), rdata.end());
+        } else {
+            vchSig.push_back(rdata.size());
+            vchSig.insert(vchSig.end(), rdata.begin(), rdata.end());
+        }
+        vchSig.push_back(0x02);
+        if (sdata[0] & 0x80) {
+            vchSig.push_back(sdata.size() + 1);
+            vchSig.push_back(0);
+            vchSig.insert(vchSig.end(), sdata.begin(), sdata.end());
+        } else {
+            vchSig.push_back(sdata.size());
+            vchSig.insert(vchSig.end(), sdata.begin(), sdata.end());
+        }
+        vchSig[1] = vchSig.size() - 2;
+        vchSig.push_back(static_cast<uint8_t>(sigHashType.getRawSigHashType()));
+        DoPush(vchSig);
+        return *this;
+    }
+
     TestBuilder &Push(const CPubKey &pubkey) {
         DoPush(std::vector<uint8_t>(pubkey.begin(), pubkey.end()));
         return *this;
@@ -443,7 +523,7 @@ public:
         array.push_back(FormatScript(spendTx.vin[0].scriptSig));
         array.push_back(FormatScript(creditTx->vout[0].scriptPubKey));
         array.push_back(FormatScriptFlags(flags));
-        array.push_back(FormatScriptError((ScriptError_t)scriptError));
+        array.push_back(FormatScriptError(scriptError));
         array.push_back(comment);
         return array;
     }
@@ -479,7 +559,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     "P2PK, bad sig", 0)
             .PushSigECDSA(keys.key0)
             .DamagePush(10)
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
 
     tests.push_back(TestBuilder(CScript() << OP_DUP << OP_HASH160
                                           << ToByteVector(keys.pubkey1C.GetID())
@@ -494,7 +574,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key2)
                         .Push(keys.pubkey2C)
                         .DamagePush(5)
-                        .ScriptError(SCRIPT_ERR_EQUALVERIFY));
+                        .SetScriptError(ScriptError::EQUALVERIFY));
 
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG,
@@ -505,7 +585,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     "P2PK anyonecanpay marked with normal hashtype", 0)
             .PushSigECDSA(keys.key1, SigHashType().withAnyoneCanPay())
             .EditPush(70, "81", "01")
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
 
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0C) << OP_CHECKSIG,
@@ -518,7 +598,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             .PushSigECDSA(keys.key0)
             .PushRedeem()
             .DamagePush(10)
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
 
     tests.push_back(TestBuilder(CScript() << OP_DUP << OP_HASH160
                                           << ToByteVector(keys.pubkey0.GetID())
@@ -543,7 +623,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key0)
                         .DamagePush(10)
                         .PushRedeem()
-                        .ScriptError(SCRIPT_ERR_EQUALVERIFY));
+                        .SetScriptError(ScriptError::EQUALVERIFY));
 
     tests.push_back(TestBuilder(CScript() << OP_3 << ToByteVector(keys.pubkey0C)
                                           << ToByteVector(keys.pubkey1C)
@@ -563,7 +643,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key0)
                         .PushSigECDSA(keys.key1)
                         .Num(0)
-                        .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+                        .SetScriptError(ScriptError::EVAL_FALSE));
 
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
                                           << ToByteVector(keys.pubkey1C)
@@ -583,7 +663,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key1)
                         .Num(0)
                         .PushRedeem()
-                        .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+                        .SetScriptError(ScriptError::EVAL_FALSE));
 
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG,
@@ -595,7 +675,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     "P2PK with too much R padding", SCRIPT_VERIFY_DERSIG)
             .PushSigECDSA(keys.key1, SigHashType(), 31, 32)
             .EditPush(1, "43021F", "44022000")
-            .ScriptError(SCRIPT_ERR_SIG_DER));
+            .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG,
                     "P2PK with too much S padding but no DERSIG", 0)
@@ -608,7 +688,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             .PushSigECDSA(keys.key1)
             .EditPush(1, "44", "45")
             .EditPush(37, "20", "2100")
-            .ScriptError(SCRIPT_ERR_SIG_DER));
+            .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG,
                     "P2PK with too little R padding but no DERSIG", 0)
@@ -619,7 +699,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     "P2PK with too little R padding", SCRIPT_VERIFY_DERSIG)
             .PushSigECDSA(keys.key1, SigHashType(), 33, 32)
             .EditPush(1, "45022100", "440220")
-            .ScriptError(SCRIPT_ERR_SIG_DER));
+            .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(
         TestBuilder(
             CScript() << ToByteVector(keys.pubkey2C) << OP_CHECKSIG << OP_NOT,
@@ -634,21 +714,21 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key2, SigHashType(), 31, 32)
                         .EditPush(1, "43021F", "44022000")
                         .DamagePush(10)
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
+                        .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(
         TestBuilder(CScript()
                         << ToByteVector(keys.pubkey2C) << OP_CHECKSIG << OP_NOT,
                     "P2PK NOT with too much R padding but no DERSIG", 0)
             .PushSigECDSA(keys.key2, SigHashType(), 31, 32)
             .EditPush(1, "43021F", "44022000")
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey2C)
                                           << OP_CHECKSIG << OP_NOT,
                                 "P2PK NOT with too much R padding",
                                 SCRIPT_VERIFY_DERSIG)
                         .PushSigECDSA(keys.key2, SigHashType(), 31, 32)
                         .EditPush(1, "43021F", "44022000")
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
+                        .SetScriptError(ScriptError::SIG_DER));
 
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG,
@@ -660,30 +740,30 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     "BIP66 example 1, with DERSIG", SCRIPT_VERIFY_DERSIG)
             .PushSigECDSA(keys.key1, SigHashType(), 33, 32)
             .EditPush(1, "45022100", "440220")
-            .ScriptError(SCRIPT_ERR_SIG_DER));
+            .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
                                           << OP_CHECKSIG << OP_NOT,
                                 "BIP66 example 2, without DERSIG", 0)
                         .PushSigECDSA(keys.key1, SigHashType(), 33, 32)
                         .EditPush(1, "45022100", "440220")
-                        .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+                        .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
                                           << OP_CHECKSIG << OP_NOT,
                                 "BIP66 example 2, with DERSIG",
                                 SCRIPT_VERIFY_DERSIG)
                         .PushSigECDSA(keys.key1, SigHashType(), 33, 32)
                         .EditPush(1, "45022100", "440220")
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
+                        .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG,
                     "BIP66 example 3, without DERSIG", 0)
             .Num(0)
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG,
                     "BIP66 example 3, with DERSIG", SCRIPT_VERIFY_DERSIG)
             .Num(0)
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
                                           << OP_CHECKSIG << OP_NOT,
                                 "BIP66 example 4, without DERSIG", 0)
@@ -710,17 +790,17 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                 "non-null DER-compliant signature",
                                 SCRIPT_VERIFY_DERSIG | SCRIPT_VERIFY_NULLFAIL)
                         .Push("300602010102010101")
-                        .ScriptError(SCRIPT_ERR_SIG_NULLFAIL));
+                        .SetScriptError(ScriptError::SIG_NULLFAIL));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG,
                     "BIP66 example 5, without DERSIG", 0)
             .Num(1)
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG,
                     "BIP66 example 5, with DERSIG", SCRIPT_VERIFY_DERSIG)
             .Num(1)
-            .ScriptError(SCRIPT_ERR_SIG_DER));
+            .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
                                           << OP_CHECKSIG << OP_NOT,
                                 "BIP66 example 6, without DERSIG", 0)
@@ -730,7 +810,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                 "BIP66 example 6, with DERSIG",
                                 SCRIPT_VERIFY_DERSIG)
                         .Num(1)
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
+                        .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_2
                                           << OP_CHECKMULTISIG,
@@ -748,7 +828,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key1, SigHashType(), 33, 32)
                         .EditPush(1, "45022100", "440220")
                         .PushSigECDSA(keys.key2)
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
+                        .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_2
                                           << OP_CHECKMULTISIG << OP_NOT,
@@ -757,7 +837,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key1, SigHashType(), 33, 32)
                         .EditPush(1, "45022100", "440220")
                         .PushSigECDSA(keys.key2)
-                        .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+                        .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_2
                                           << OP_CHECKMULTISIG << OP_NOT,
@@ -767,7 +847,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key1, SigHashType(), 33, 32)
                         .EditPush(1, "45022100", "440220")
                         .PushSigECDSA(keys.key2)
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
+                        .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_2
                                           << OP_CHECKMULTISIG,
@@ -776,7 +856,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .Num(0)
                         .PushSigECDSA(keys.key2, SigHashType(), 33, 32)
                         .EditPush(1, "45022100", "440220")
-                        .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+                        .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_2
                                           << OP_CHECKMULTISIG,
@@ -786,7 +866,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .Num(0)
                         .PushSigECDSA(keys.key2, SigHashType(), 33, 32)
                         .EditPush(1, "45022100", "440220")
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
+                        .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_2
                                           << OP_CHECKMULTISIG << OP_NOT,
@@ -804,7 +884,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .Num(0)
                         .PushSigECDSA(keys.key2, SigHashType(), 33, 32)
                         .EditPush(1, "45022100", "440220")
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
+                        .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_2
                                           << OP_CHECKMULTISIG,
@@ -813,7 +893,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key1, SigHashType(), 33, 32)
                         .EditPush(1, "45022100", "440220")
                         .Num(0)
-                        .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+                        .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_2
                                           << OP_CHECKMULTISIG,
@@ -823,7 +903,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key1, SigHashType(), 33, 32)
                         .EditPush(1, "45022100", "440220")
                         .Num(0)
-                        .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+                        .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_2
                                           << OP_CHECKMULTISIG << OP_NOT,
@@ -852,7 +932,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     SCRIPT_VERIFY_DERSIG)
             .PushSigECDSA(keys.key2)
             .EditPush(70, "01", "0101")
-            .ScriptError(SCRIPT_ERR_SIG_DER));
+            .SetScriptError(ScriptError::SIG_DER));
 
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey2C) << OP_CHECKSIG,
@@ -862,7 +942,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
         TestBuilder(CScript() << ToByteVector(keys.pubkey2C) << OP_CHECKSIG,
                     "P2PK with high S", SCRIPT_VERIFY_LOW_S)
             .PushSigECDSA(keys.key2, SigHashType(), 32, 33)
-            .ScriptError(SCRIPT_ERR_SIG_HIGH_S));
+            .SetScriptError(ScriptError::SIG_HIGH_S));
 
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKSIG,
@@ -872,19 +952,19 @@ BOOST_AUTO_TEST_CASE(script_build) {
         TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKSIG,
                     "P2PK with hybrid pubkey", SCRIPT_VERIFY_STRICTENC)
             .PushSigECDSA(keys.key0, SigHashType())
-            .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
+            .SetScriptError(ScriptError::PUBKEYTYPE));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0H)
                                           << OP_CHECKSIG << OP_NOT,
                                 "P2PK NOT with hybrid pubkey but no STRICTENC",
                                 0)
                         .PushSigECDSA(keys.key0)
-                        .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+                        .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0H)
                                           << OP_CHECKSIG << OP_NOT,
                                 "P2PK NOT with hybrid pubkey",
                                 SCRIPT_VERIFY_STRICTENC)
                         .PushSigECDSA(keys.key0)
-                        .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
+                        .SetScriptError(ScriptError::PUBKEYTYPE));
     tests.push_back(
         TestBuilder(CScript()
                         << ToByteVector(keys.pubkey0H) << OP_CHECKSIG << OP_NOT,
@@ -897,7 +977,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                 SCRIPT_VERIFY_STRICTENC)
                         .PushSigECDSA(keys.key0)
                         .DamagePush(10)
-                        .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
+                        .SetScriptError(ScriptError::PUBKEYTYPE));
     tests.push_back(
         TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0H)
                               << ToByteVector(keys.pubkey1C) << OP_2
@@ -920,7 +1000,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                 SCRIPT_VERIFY_STRICTENC)
                         .Num(0)
                         .PushSigECDSA(keys.key1)
-                        .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
+                        .SetScriptError(ScriptError::PUBKEYTYPE));
 
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG,
@@ -930,7 +1010,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
         TestBuilder(CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG,
                     "P2PK with undefined hashtype", SCRIPT_VERIFY_STRICTENC)
             .PushSigECDSA(keys.key1, SigHashType(5))
-            .ScriptError(SCRIPT_ERR_SIG_HASHTYPE));
+            .SetScriptError(ScriptError::SIG_HASHTYPE));
 
     // Generate P2PKH tests for invalid SigHashType
     tests.push_back(TestBuilder(CScript() << OP_DUP << OP_HASH160
@@ -949,7 +1029,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                       Amount::zero(), SCRIPT_VERIFY_STRICTENC)
                         .Push(keys.pubkey0)
                         // Should fail for STRICTENC
-                        .ScriptError(SCRIPT_ERR_SIG_HASHTYPE));
+                        .SetScriptError(ScriptError::SIG_HASHTYPE));
 
     // Generate P2SH tests for invalid SigHashType
     tests.push_back(
@@ -965,7 +1045,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             .PushSigECDSA(keys.key1, SigHashType(0x21))
             .PushRedeem()
             // Should fail for STRICTENC
-            .ScriptError(SCRIPT_ERR_SIG_HASHTYPE));
+            .SetScriptError(ScriptError::SIG_HASHTYPE));
 
     tests.push_back(
         TestBuilder(
@@ -981,7 +1061,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     SCRIPT_VERIFY_STRICTENC)
             .PushSigECDSA(keys.key1, SigHashType(5))
             .DamagePush(10)
-            .ScriptError(SCRIPT_ERR_SIG_HASHTYPE));
+            .SetScriptError(ScriptError::SIG_HASHTYPE));
 
     tests.push_back(TestBuilder(CScript() << OP_3 << ToByteVector(keys.pubkey0C)
                                           << ToByteVector(keys.pubkey1C)
@@ -1002,7 +1082,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushSigECDSA(keys.key0)
                         .PushSigECDSA(keys.key1)
                         .PushSigECDSA(keys.key2)
-                        .ScriptError(SCRIPT_ERR_SIG_NULLDUMMY));
+                        .SetScriptError(ScriptError::SIG_NULLDUMMY));
     tests.push_back(
         TestBuilder(
             CScript() << OP_3 << ToByteVector(keys.pubkey0C)
@@ -1027,7 +1107,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             .PushSigECDSA(keys.key1)
             .PushSigECDSA(keys.key2)
             .DamagePush(10)
-            .ScriptError(SCRIPT_ERR_SIG_NULLDUMMY));
+            .SetScriptError(ScriptError::SIG_NULLDUMMY));
 
     tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey1C) << OP_2
@@ -1048,7 +1128,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             .Num(0)
             .PushSigECDSA(keys.key1)
             .Add(CScript() << OP_DUP)
-            .ScriptError(SCRIPT_ERR_SIG_PUSHONLY));
+            .SetScriptError(ScriptError::SIG_PUSHONLY));
     tests.push_back(
         TestBuilder(
             CScript() << ToByteVector(keys.pubkey2C) << OP_CHECKSIG,
@@ -1069,7 +1149,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             .PushSigECDSA(keys.key2)
             .Add(CScript() << OP_NOP8)
             .PushRedeem()
-            .ScriptError(SCRIPT_ERR_SIG_PUSHONLY));
+            .SetScriptError(ScriptError::SIG_PUSHONLY));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey2C) << OP_CHECKSIG,
                     "P2SH(P2PK) with non-push scriptSig but not P2SH",
@@ -1077,7 +1157,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             .PushSigECDSA(keys.key2)
             .Add(CScript() << OP_NOP8)
             .PushRedeem()
-            .ScriptError(SCRIPT_ERR_SIG_PUSHONLY));
+            .SetScriptError(ScriptError::SIG_PUSHONLY));
     tests.push_back(
         TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey1C)
                               << ToByteVector(keys.pubkey1C) << OP_2
@@ -1099,7 +1179,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     SCRIPT_VERIFY_CLEANSTACK | SCRIPT_VERIFY_P2SH)
             .Num(11)
             .PushSigECDSA(keys.key0)
-            .ScriptError(SCRIPT_ERR_CLEANSTACK));
+            .SetScriptError(ScriptError::CLEANSTACK));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
                     "P2SH with unnecessary input but no CLEANSTACK",
@@ -1114,7 +1194,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             .Num(11)
             .PushSigECDSA(keys.key0)
             .PushRedeem()
-            .ScriptError(SCRIPT_ERR_CLEANSTACK));
+            .SetScriptError(ScriptError::CLEANSTACK));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
                     "P2SH with CLEANSTACK",
@@ -1136,14 +1216,14 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     TEST_AMOUNT)
             .PushSigECDSA(keys.key0, SigHashType().withForkId(), 32, 32,
                           TEST_AMOUNT + SATOSHI)
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
                     "P2PK INVALID FORKID", SCRIPT_VERIFY_STRICTENC, false,
                     TEST_AMOUNT)
             .PushSigECDSA(keys.key0, SigHashType().withForkId(), 32, 32,
                           TEST_AMOUNT)
-            .ScriptError(SCRIPT_ERR_ILLEGAL_FORKID));
+            .SetScriptError(ScriptError::ILLEGAL_FORKID));
 
     // Test replay protection
     tests.push_back(
@@ -1165,12 +1245,11 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     false, TEST_AMOUNT)
             .PushSigECDSA(keys.key0, SigHashType().withForkId(), 32, 32,
                           TEST_AMOUNT, SCRIPT_ENABLE_SIGHASH_FORKID)
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
 
     // Test OP_CHECKDATASIG
-    const uint32_t checkdatasigflags = SCRIPT_VERIFY_STRICTENC |
-                                       SCRIPT_VERIFY_NULLFAIL |
-                                       SCRIPT_ENABLE_CHECKDATASIG;
+    const uint32_t checkdatasigflags =
+        SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_NULLFAIL;
 
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKDATASIG,
@@ -1183,7 +1262,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                 checkdatasigflags)
                         .PushDataSigECDSA(keys.key1, {})
                         .Num(1)
-                        .ScriptError(SCRIPT_ERR_SIG_NULLFAIL));
+                        .SetScriptError(ScriptError::SIG_NULLFAIL));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
                                           << OP_CHECKDATASIG << OP_NOT,
                                 "CHECKDATASIG without NULLFAIL flags",
@@ -1207,7 +1286,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     checkdatasigflags | SCRIPT_VERIFY_LOW_S)
             .PushDataSigECDSA(keys.key1, {}, 32, 33)
             .Num(0)
-            .ScriptError(SCRIPT_ERR_SIG_HIGH_S));
+            .SetScriptError(ScriptError::SIG_HIGH_S));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKDATASIG,
                     "CHECKDATASIG with too little R padding but no DERSIG",
@@ -1221,7 +1300,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             .PushDataSigECDSA(keys.key1, {}, 33, 32)
             .EditPush(1, "45022100", "440220")
             .Num(0)
-            .ScriptError(SCRIPT_ERR_SIG_DER));
+            .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKDATASIG,
                     "CHECKDATASIG with hybrid pubkey but no STRICTENC",
@@ -1233,12 +1312,12 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     "CHECKDATASIG with hybrid pubkey", checkdatasigflags)
             .PushDataSigECDSA(keys.key0, {})
             .Num(0)
-            .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
+            .SetScriptError(ScriptError::PUBKEYTYPE));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKDATASIG
                               << OP_NOT,
                     "CHECKDATASIG with invalid hybrid pubkey but no STRICTENC",
-                    SCRIPT_ENABLE_CHECKDATASIG)
+                    0)
             .PushDataSigECDSA(keys.key0, {})
             .DamagePush(10)
             .Num(0));
@@ -1249,7 +1328,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             .PushDataSigECDSA(keys.key0, {})
             .DamagePush(10)
             .Num(0)
-            .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
+            .SetScriptError(ScriptError::PUBKEYTYPE));
 
     // Test OP_CHECKDATASIGVERIFY
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
@@ -1264,21 +1343,21 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                 checkdatasigflags)
                         .PushDataSigECDSA(keys.key1, {})
                         .Num(1)
-                        .ScriptError(SCRIPT_ERR_SIG_NULLFAIL));
+                        .SetScriptError(ScriptError::SIG_NULLFAIL));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
                                           << OP_CHECKDATASIGVERIFY << OP_TRUE,
                                 "CHECKDATASIGVERIFY without NULLFAIL flags",
                                 checkdatasigflags & ~SCRIPT_VERIFY_NULLFAIL)
                         .PushDataSigECDSA(keys.key1, {})
                         .Num(1)
-                        .ScriptError(SCRIPT_ERR_CHECKDATASIGVERIFY));
+                        .SetScriptError(ScriptError::CHECKDATASIGVERIFY));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
                                           << OP_CHECKDATASIGVERIFY << OP_TRUE,
                                 "CHECKDATASIGVERIFY empty signature",
                                 checkdatasigflags)
                         .Num(0)
                         .Num(0)
-                        .ScriptError(SCRIPT_ERR_CHECKDATASIGVERIFY));
+                        .SetScriptError(ScriptError::CHECKDATASIGVERIFY));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
                                           << OP_CHECKDATASIGVERIFY << OP_TRUE,
                                 "CHECKDATASIG with High S but no Low S",
@@ -1291,7 +1370,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                 checkdatasigflags | SCRIPT_VERIFY_LOW_S)
                         .PushDataSigECDSA(keys.key1, {}, 32, 33)
                         .Num(0)
-                        .ScriptError(SCRIPT_ERR_SIG_HIGH_S));
+                        .SetScriptError(ScriptError::SIG_HIGH_S));
     tests.push_back(
         TestBuilder(
             CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKDATASIGVERIFY
@@ -1308,7 +1387,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushDataSigECDSA(keys.key1, {}, 33, 32)
                         .EditPush(1, "45022100", "440220")
                         .Num(0)
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
+                        .SetScriptError(ScriptError::SIG_DER));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0H)
                               << OP_CHECKDATASIGVERIFY << OP_TRUE,
@@ -1322,17 +1401,16 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                 checkdatasigflags)
                         .PushDataSigECDSA(keys.key0, {})
                         .Num(0)
-                        .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
+                        .SetScriptError(ScriptError::PUBKEYTYPE));
     tests.push_back(
         TestBuilder(
             CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKDATASIGVERIFY
                       << OP_TRUE,
-            "CHECKDATASIGVERIFY with invalid hybrid pubkey but no STRICTENC",
-            SCRIPT_ENABLE_CHECKDATASIG)
+            "CHECKDATASIGVERIFY with invalid hybrid pubkey but no STRICTENC", 0)
             .PushDataSigECDSA(keys.key0, {})
             .DamagePush(10)
             .Num(0)
-            .ScriptError(SCRIPT_ERR_CHECKDATASIGVERIFY));
+            .SetScriptError(ScriptError::CHECKDATASIGVERIFY));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0H)
                                           << OP_CHECKDATASIGVERIFY << OP_TRUE,
                                 "CHECKDATASIGVERIFY with invalid hybrid pubkey",
@@ -1340,627 +1418,162 @@ BOOST_AUTO_TEST_CASE(script_build) {
                         .PushDataSigECDSA(keys.key0, {})
                         .DamagePush(10)
                         .Num(0)
-                        .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
-
-    // Misc ECDSA tests duplicated with Schnorr flag on
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
-                    "P2PK ECDSA with Schnorr flag on", SCRIPT_ENABLE_SCHNORR)
-            .PushSigECDSA(keys.key0));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
-                    "P2PK, bad sig ECDSA with Schnorr flag on",
-                    SCRIPT_ENABLE_SCHNORR)
-            .PushSigECDSA(keys.key0)
-            .DamagePush(10)
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
-
-    tests.push_back(TestBuilder(CScript() << OP_DUP << OP_HASH160
-                                          << ToByteVector(keys.pubkey1C.GetID())
-                                          << OP_EQUALVERIFY << OP_CHECKSIG,
-                                "P2PKH  ECDSA with Schnorr flag on",
-                                SCRIPT_ENABLE_SCHNORR)
-                        .PushSigECDSA(keys.key1)
-                        .Push(keys.pubkey1C));
-
-    tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
-                                          << ToByteVector(keys.pubkey1C)
-                                          << ToByteVector(keys.pubkey2C) << OP_3
-                                          << OP_CHECKMULTISIG,
-                                "P2SH(2-of-3) ECDSA with Schnorr flag on",
-                                SCRIPT_VERIFY_P2SH | SCRIPT_ENABLE_SCHNORR,
-                                true)
-                        .Num(0)
-                        .PushSigECDSA(keys.key1)
-                        .PushSigECDSA(keys.key2)
-                        .PushRedeem());
-
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey2C) << OP_CHECKSIG,
-                    "LOW_S violating ECDSA with Schnorr flag on",
-                    SCRIPT_VERIFY_LOW_S | SCRIPT_ENABLE_SCHNORR)
-            .PushSigECDSA(keys.key2, SigHashType(), 32, 33)
-            .ScriptError(SCRIPT_ERR_SIG_HIGH_S));
-
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKSIG,
-                    "STRICTENC-violating hybrid pubkey with Schnorr flag on",
-                    SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SCHNORR)
-            .PushSigECDSA(keys.key0, SigHashType())
-            .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
-
-    // Duplicated test OP_CHECKDATASIG with Schnorr flag on
-    const uint32_t checkdatasigschnorrflags =
-        SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_NULLFAIL |
-        SCRIPT_ENABLE_CHECKDATASIG | SCRIPT_ENABLE_SCHNORR;
-
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKDATASIG,
-                    "Standard CHECKDATASIG", checkdatasigschnorrflags)
-            .PushDataSigECDSA(keys.key1, {})
-            .Num(0));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
-                                          << OP_CHECKDATASIG << OP_NOT,
-                                "CHECKDATASIG with NULLFAIL flags",
-                                checkdatasigschnorrflags)
-                        .PushDataSigECDSA(keys.key1, {})
-                        .Num(1)
-                        .ScriptError(SCRIPT_ERR_SIG_NULLFAIL));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKDATASIG
-                              << OP_NOT,
-                    "CHECKDATASIG without NULLFAIL flags",
-                    checkdatasigschnorrflags & ~SCRIPT_VERIFY_NULLFAIL)
-            .PushDataSigECDSA(keys.key1, {})
-            .Num(1));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
-                                          << OP_CHECKDATASIG << OP_NOT,
-                                "CHECKDATASIG empty signature",
-                                checkdatasigschnorrflags)
-                        .Num(0)
-                        .Num(0));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKDATASIG,
-                    "CHECKDATASIG with High S but no Low S",
-                    checkdatasigschnorrflags)
-            .PushDataSigECDSA(keys.key1, {}, 32, 33)
-            .Num(0));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKDATASIG,
-                    "CHECKDATASIG with High S",
-                    checkdatasigschnorrflags | SCRIPT_VERIFY_LOW_S)
-            .PushDataSigECDSA(keys.key1, {}, 32, 33)
-            .Num(0)
-            .ScriptError(SCRIPT_ERR_SIG_HIGH_S));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKDATASIG,
-                    "CHECKDATASIG with too little R padding but no DERSIG",
-                    checkdatasigschnorrflags & ~SCRIPT_VERIFY_STRICTENC)
-            .PushDataSigECDSA(keys.key1, {}, 33, 32)
-            .EditPush(1, "45022100", "440220")
-            .Num(0));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKDATASIG,
-                    "CHECKDATASIG with too little R padding",
-                    checkdatasigschnorrflags)
-            .PushDataSigECDSA(keys.key1, {}, 33, 32)
-            .EditPush(1, "45022100", "440220")
-            .Num(0)
-            .ScriptError(SCRIPT_ERR_SIG_DER));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKDATASIG,
-                    "CHECKDATASIG with hybrid pubkey but no STRICTENC",
-                    checkdatasigschnorrflags & ~SCRIPT_VERIFY_STRICTENC)
-            .PushDataSigECDSA(keys.key0, {})
-            .Num(0));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKDATASIG,
-                    "CHECKDATASIG with hybrid pubkey", checkdatasigschnorrflags)
-            .PushDataSigECDSA(keys.key0, {})
-            .Num(0)
-            .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKDATASIG
-                              << OP_NOT,
-                    "CHECKDATASIG with invalid hybrid pubkey but no STRICTENC",
-                    SCRIPT_ENABLE_CHECKDATASIG)
-            .PushDataSigECDSA(keys.key0, {})
-            .DamagePush(10)
-            .Num(0));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKDATASIG,
-                    "CHECKDATASIG with invalid hybrid pubkey",
-                    checkdatasigschnorrflags)
-            .PushDataSigECDSA(keys.key0, {})
-            .DamagePush(10)
-            .Num(0)
-            .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
-
-    // Duplicated test OP_CHECKDATASIGVERIFY with Schnorr flag on
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
-                                          << OP_CHECKDATASIGVERIFY << OP_TRUE,
-                                "Standard CHECKDATASIGVERIFY",
-                                checkdatasigschnorrflags)
-                        .PushDataSigECDSA(keys.key1, {})
-                        .Num(0));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
-                                          << OP_CHECKDATASIGVERIFY << OP_TRUE,
-                                "CHECKDATASIGVERIFY with NULLFAIL flags",
-                                checkdatasigschnorrflags)
-                        .PushDataSigECDSA(keys.key1, {})
-                        .Num(1)
-                        .ScriptError(SCRIPT_ERR_SIG_NULLFAIL));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
-                              << OP_CHECKDATASIGVERIFY << OP_TRUE,
-                    "CHECKDATASIGVERIFY without NULLFAIL flags",
-                    checkdatasigschnorrflags & ~SCRIPT_VERIFY_NULLFAIL)
-            .PushDataSigECDSA(keys.key1, {})
-            .Num(1)
-            .ScriptError(SCRIPT_ERR_CHECKDATASIGVERIFY));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
-                                          << OP_CHECKDATASIGVERIFY << OP_TRUE,
-                                "CHECKDATASIGVERIFY empty signature",
-                                checkdatasigschnorrflags)
-                        .Num(0)
-                        .Num(0)
-                        .ScriptError(SCRIPT_ERR_CHECKDATASIGVERIFY));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
-                                          << OP_CHECKDATASIGVERIFY << OP_TRUE,
-                                "CHECKDATASIG with High S but no Low S",
-                                checkdatasigschnorrflags)
-                        .PushDataSigECDSA(keys.key1, {}, 32, 33)
-                        .Num(0));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
-                                          << OP_CHECKDATASIGVERIFY << OP_TRUE,
-                                "CHECKDATASIG with High S",
-                                checkdatasigschnorrflags | SCRIPT_VERIFY_LOW_S)
-                        .PushDataSigECDSA(keys.key1, {}, 32, 33)
-                        .Num(0)
-                        .ScriptError(SCRIPT_ERR_SIG_HIGH_S));
-    tests.push_back(
-        TestBuilder(
-            CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKDATASIGVERIFY
-                      << OP_TRUE,
-            "CHECKDATASIGVERIFY with too little R padding but no DERSIG",
-            checkdatasigschnorrflags & ~SCRIPT_VERIFY_STRICTENC)
-            .PushDataSigECDSA(keys.key1, {}, 33, 32)
-            .EditPush(1, "45022100", "440220")
-            .Num(0));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1C)
-                                          << OP_CHECKDATASIGVERIFY << OP_TRUE,
-                                "CHECKDATASIGVERIFY with too little R padding",
-                                checkdatasigschnorrflags)
-                        .PushDataSigECDSA(keys.key1, {}, 33, 32)
-                        .EditPush(1, "45022100", "440220")
-                        .Num(0)
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0H)
-                              << OP_CHECKDATASIGVERIFY << OP_TRUE,
-                    "CHECKDATASIGVERIFY with hybrid pubkey but no STRICTENC",
-                    checkdatasigschnorrflags & ~SCRIPT_VERIFY_STRICTENC)
-            .PushDataSigECDSA(keys.key0, {})
-            .Num(0));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0H)
-                                          << OP_CHECKDATASIGVERIFY << OP_TRUE,
-                                "CHECKDATASIGVERIFY with hybrid pubkey",
-                                checkdatasigschnorrflags)
-                        .PushDataSigECDSA(keys.key0, {})
-                        .Num(0)
-                        .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
-    tests.push_back(
-        TestBuilder(
-            CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKDATASIGVERIFY
-                      << OP_TRUE,
-            "CHECKDATASIGVERIFY with invalid hybrid pubkey but no STRICTENC",
-            SCRIPT_ENABLE_CHECKDATASIG)
-            .PushDataSigECDSA(keys.key0, {})
-            .DamagePush(10)
-            .Num(0)
-            .ScriptError(SCRIPT_ERR_CHECKDATASIGVERIFY));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0H)
-                                          << OP_CHECKDATASIGVERIFY << OP_TRUE,
-                                "CHECKDATASIGVERIFY with invalid hybrid pubkey",
-                                checkdatasigschnorrflags)
-                        .PushDataSigECDSA(keys.key0, {})
-                        .DamagePush(10)
-                        .Num(0)
-                        .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
+                        .SetScriptError(ScriptError::PUBKEYTYPE));
 
     // Test all six CHECK*SIG* opcodes with Schnorr signatures.
-    // - Schnorr/ECDSA signatures with varying flags SCHNORR / STRICTENC.
+    // - STRICTENC flag on/off.
     // - test with different key / mismatching key
 
-    // CHECKSIG
+    // CHECKSIG and Schnorr
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
-                    "CHECKSIG Schnorr w/ neither STRICTENC,SCHNORR", 0)
-            .PushSigSchnorr(keys.key0)
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
-                    "CHECKSIG ECDSA w/ neither STRICTENC,SCHNORR", 0)
-            .PushSigECDSA(keys.key0));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
-                    "CHECKSIG Schnorr w/ SCHNORR", SCRIPT_ENABLE_SCHNORR)
+                    "CHECKSIG Schnorr", 0)
             .PushSigSchnorr(keys.key0));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
-                    "CHECKSIG ECDSA w/ SCHNORR", SCRIPT_ENABLE_SCHNORR)
-            .PushSigECDSA(keys.key0));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
                     "CHECKSIG Schnorr w/ STRICTENC", SCRIPT_VERIFY_STRICTENC)
-            .PushSigSchnorr(keys.key0)
-            .ScriptError(SCRIPT_ERR_SIG_DER));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
-                    "CHECKSIG ECDSA w/ STRICTENC", SCRIPT_VERIFY_STRICTENC)
-            .PushSigECDSA(keys.key0));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
-                    "CHECKSIG Schnorr w/ STRICTENC,SCHNORR",
-                    SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
             .PushSigSchnorr(keys.key0));
     tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
-                    "CHECKSIG ECDSA w/ STRICTENC,SCHNORR",
-                    SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
-            .PushSigECDSA(keys.key0));
-    tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG,
-                    "CHECKSIG Schnorr other key",
-                    SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
+                    "CHECKSIG Schnorr other key", SCRIPT_VERIFY_STRICTENC)
             .PushSigSchnorr(keys.key1));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
                                           << OP_CHECKSIG << OP_NOT,
                                 "CHECKSIG Schnorr mismatched key",
-                                SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushSigSchnorr(keys.key1));
 
-    // CHECKSIGVERIFY
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIGVERIFY
-                              << OP_1,
-                    "CHECKSIGVERIFY Schnorr w/ neither STRICTENC,SCHNORR", 0)
-            .PushSigSchnorr(keys.key0)
-            .ScriptError(SCRIPT_ERR_CHECKSIGVERIFY));
-    tests.push_back(
-        TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIGVERIFY
-                              << OP_1,
-                    "CHECKSIGVERIFY ECDSA w/ neither STRICTENC,SCHNORR", 0)
-            .PushSigECDSA(keys.key0));
+    // CHECKSIGVERIFY and Schnorr
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
                                           << OP_CHECKSIGVERIFY << OP_1,
-                                "CHECKSIGVERIFY Schnorr w/ SCHNORR",
-                                SCRIPT_ENABLE_SCHNORR)
+                                "CHECKSIGVERIFY Schnorr", 0)
                         .PushSigSchnorr(keys.key0));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
-                                          << OP_CHECKSIGVERIFY << OP_1,
-                                "CHECKSIGVERIFY ECDSA w/ SCHNORR",
-                                SCRIPT_ENABLE_SCHNORR)
-                        .PushSigECDSA(keys.key0));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
                                           << OP_CHECKSIGVERIFY << OP_1,
                                 "CHECKSIGVERIFY Schnorr w/ STRICTENC",
                                 SCRIPT_VERIFY_STRICTENC)
-                        .PushSigSchnorr(keys.key0)
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
-                                          << OP_CHECKSIGVERIFY << OP_1,
-                                "CHECKSIGVERIFY ECDSA w/ STRICTENC",
-                                SCRIPT_VERIFY_STRICTENC)
-                        .PushSigECDSA(keys.key0));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
-                                          << OP_CHECKSIGVERIFY << OP_1,
-                                "CHECKSIGVERIFY Schnorr w/ STRICTENC,SCHNORR",
-                                SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
                         .PushSigSchnorr(keys.key0));
-    tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
-                                          << OP_CHECKSIGVERIFY << OP_1,
-                                "CHECKSIGVERIFY ECDSA w/ STRICTENC,SCHNORR",
-                                SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
-                        .PushSigECDSA(keys.key0));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey1)
                                           << OP_CHECKSIGVERIFY << OP_1,
                                 "CHECKSIGVERIFY Schnorr other key",
-                                SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushSigSchnorr(keys.key1));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
                                           << OP_CHECKSIGVERIFY << OP_1,
                                 "CHECKSIGVERIFY Schnorr mismatched key",
-                                SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushSigSchnorr(keys.key1)
-                        .ScriptError(SCRIPT_ERR_CHECKSIGVERIFY));
+                        .SetScriptError(ScriptError::CHECKSIGVERIFY));
 
-    // CHECKDATASIG
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIG,
-                    "CHECKDATASIG Schnorr w/ neither STRICTENC,SCHNORR",
-                    SCRIPT_ENABLE_CHECKDATASIG)
-            .PushDataSigSchnorr(keys.key0, {})
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIG,
-                    "CHECKDATASIG ECDSA w/ neither STRICTENC,SCHNORR",
-                    SCRIPT_ENABLE_CHECKDATASIG)
-            .PushDataSigECDSA(keys.key0, {}));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIG,
-                    "CHECKDATASIG Schnorr w/ SCHNORR",
-                    SCRIPT_ENABLE_CHECKDATASIG | SCRIPT_ENABLE_SCHNORR)
-            .PushDataSigSchnorr(keys.key0, {}));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIG,
-                    "CHECKDATASIG ECDSA w/ SCHNORR",
-                    SCRIPT_ENABLE_CHECKDATASIG | SCRIPT_ENABLE_SCHNORR)
-            .PushDataSigECDSA(keys.key0, {}));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIG,
-                    "CHECKDATASIG Schnorr w/ STRICTENC",
-                    SCRIPT_ENABLE_CHECKDATASIG | SCRIPT_VERIFY_STRICTENC)
-            .PushDataSigSchnorr(keys.key0, {})
-            .ScriptError(SCRIPT_ERR_SIG_DER));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIG,
-                    "CHECKDATASIG ECDSA w/ STRICTENC",
-                    SCRIPT_ENABLE_CHECKDATASIG | SCRIPT_VERIFY_STRICTENC)
-            .PushDataSigECDSA(keys.key0, {}));
+    // CHECKDATASIG and Schnorr
     tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
                                           << OP_CHECKDATASIG,
-                                "CHECKDATASIG Schnorr w/ STRICTENC,SCHNORR",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
+                                "CHECKDATASIG Schnorr", 0)
                         .PushDataSigSchnorr(keys.key0, {}));
     tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
                                           << OP_CHECKDATASIG,
-                                "CHECKDATASIG ECDSA w/ STRICTENC,SCHNORR",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
-                        .PushDataSigECDSA(keys.key0, {}));
+                                "CHECKDATASIG Schnorr w/ STRICTENC",
+                                SCRIPT_VERIFY_STRICTENC)
+                        .PushDataSigSchnorr(keys.key0, {}));
     tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey1)
                                           << OP_CHECKDATASIG,
                                 "CHECKDATASIG Schnorr other key",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushDataSigSchnorr(keys.key1, {}));
     tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
                                           << OP_CHECKDATASIG << OP_NOT,
                                 "CHECKDATASIG Schnorr mismatched key",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushDataSigSchnorr(keys.key1, {}));
     tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey1)
                                           << OP_CHECKDATASIG,
                                 "CHECKDATASIG Schnorr other message",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushDataSigSchnorr(keys.key1, {1}));
     tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey1)
                                           << OP_CHECKDATASIG << OP_NOT,
                                 "CHECKDATASIG Schnorr wrong message",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushDataSigSchnorr(keys.key1, {1}));
 
-    // CHECKDATASIGVERIFY
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIGVERIFY << OP_1,
-                    "CHECKDATASIGVERIFY Schnorr w/ neither STRICTENC,SCHNORR",
-                    SCRIPT_ENABLE_CHECKDATASIG)
-            .PushDataSigSchnorr(keys.key0, {})
-            .ScriptError(SCRIPT_ERR_CHECKDATASIGVERIFY));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIGVERIFY << OP_1,
-                    "CHECKDATASIGVERIFY ECDSA w/ neither STRICTENC,SCHNORR",
-                    SCRIPT_ENABLE_CHECKDATASIG)
-            .PushDataSigECDSA(keys.key0, {}));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIGVERIFY << OP_1,
-                    "CHECKDATASIGVERIFY Schnorr w/ SCHNORR",
-                    SCRIPT_ENABLE_CHECKDATASIG | SCRIPT_ENABLE_SCHNORR)
-            .PushDataSigSchnorr(keys.key0, {}));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIGVERIFY << OP_1,
-                    "CHECKDATASIGVERIFY ECDSA w/ SCHNORR",
-                    SCRIPT_ENABLE_CHECKDATASIG | SCRIPT_ENABLE_SCHNORR)
-            .PushDataSigECDSA(keys.key0, {}));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIGVERIFY << OP_1,
-                    "CHECKDATASIGVERIFY Schnorr w/ STRICTENC",
-                    SCRIPT_ENABLE_CHECKDATASIG | SCRIPT_VERIFY_STRICTENC)
-            .PushDataSigSchnorr(keys.key0, {})
-            .ScriptError(SCRIPT_ERR_SIG_DER));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIGVERIFY << OP_1,
-                    "CHECKDATASIGVERIFY ECDSA w/ STRICTENC",
-                    SCRIPT_ENABLE_CHECKDATASIG | SCRIPT_VERIFY_STRICTENC)
-            .PushDataSigECDSA(keys.key0, {}));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
-                              << OP_CHECKDATASIGVERIFY << OP_1,
-                    "CHECKDATASIGVERIFY Schnorr w/ STRICTENC,SCHNORR",
-                    SCRIPT_ENABLE_CHECKDATASIG | SCRIPT_ENABLE_SCHNORR |
-                        SCRIPT_VERIFY_STRICTENC)
-            .PushDataSigSchnorr(keys.key0, {}));
+    // CHECKDATASIGVERIFY and Schnorr
     tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
                                           << OP_CHECKDATASIGVERIFY << OP_1,
-                                "CHECKDATASIGVERIFY ECDSA w/ STRICTENC,SCHNORR",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
-                        .PushDataSigECDSA(keys.key0, {}));
+                                "CHECKDATASIGVERIFY Schnorr", 0)
+                        .PushDataSigSchnorr(keys.key0, {}));
+    tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
+                                          << OP_CHECKDATASIGVERIFY << OP_1,
+                                "CHECKDATASIGVERIFY Schnorr w/ STRICTENC",
+                                SCRIPT_VERIFY_STRICTENC)
+                        .PushDataSigSchnorr(keys.key0, {}));
     tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey1)
                                           << OP_CHECKDATASIGVERIFY << OP_1,
                                 "CHECKDATASIGVERIFY Schnorr other key",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushDataSigSchnorr(keys.key1, {}));
     tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0)
                                           << OP_CHECKDATASIGVERIFY << OP_1,
                                 "CHECKDATASIGVERIFY Schnorr mismatched key",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushDataSigSchnorr(keys.key1, {})
-                        .ScriptError(SCRIPT_ERR_CHECKDATASIGVERIFY));
+                        .SetScriptError(ScriptError::CHECKDATASIGVERIFY));
     tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey1)
                                           << OP_CHECKDATASIGVERIFY << OP_1,
                                 "CHECKDATASIGVERIFY Schnorr other message",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushDataSigSchnorr(keys.key1, {1}));
     tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey1)
                                           << OP_CHECKDATASIGVERIFY << OP_1,
                                 "CHECKDATASIGVERIFY Schnorr wrong message",
-                                SCRIPT_ENABLE_CHECKDATASIG |
-                                    SCRIPT_ENABLE_SCHNORR |
-                                    SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushDataSigSchnorr(keys.key1, {1})
-                        .ScriptError(SCRIPT_ERR_CHECKDATASIGVERIFY));
+                        .SetScriptError(ScriptError::CHECKDATASIGVERIFY));
 
-    // CHECKMULTISIG 1-of-1
-    tests.push_back(
-        TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0) << OP_1
-                              << OP_CHECKMULTISIG,
-                    "CHECKMULTISIG Schnorr w/ neither STRICTENC,SCHNORR", 0)
-            .Num(0)
-            .PushSigSchnorr(keys.key0)
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
-    tests.push_back(
-        TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0) << OP_1
-                              << OP_CHECKMULTISIG,
-                    "CHECKMULTISIG ECDSA w/ neither STRICTENC,SCHNORR", 0)
-            .Num(0)
-            .PushSigECDSA(keys.key0));
+    // CHECKMULTISIG 1-of-1 and Schnorr
     tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0)
                                           << OP_1 << OP_CHECKMULTISIG,
-                                "CHECKMULTISIG Schnorr w/ SCHNORR",
-                                SCRIPT_ENABLE_SCHNORR)
+                                "CHECKMULTISIG Schnorr w/ no STRICTENC", 0)
                         .Num(0)
                         .PushSigSchnorr(keys.key0)
-                        .ScriptError(SCRIPT_ERR_SIG_BADLENGTH));
-    tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0)
-                                          << OP_1 << OP_CHECKMULTISIG,
-                                "CHECKMULTISIG ECDSA w/ SCHNORR",
-                                SCRIPT_ENABLE_SCHNORR)
-                        .Num(0)
-                        .PushSigECDSA(keys.key0));
+                        .SetScriptError(ScriptError::SIG_BADLENGTH));
     tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0)
                                           << OP_1 << OP_CHECKMULTISIG,
                                 "CHECKMULTISIG Schnorr w/ STRICTENC",
                                 SCRIPT_VERIFY_STRICTENC)
                         .Num(0)
                         .PushSigSchnorr(keys.key0)
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
-    tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0)
-                                          << OP_1 << OP_CHECKMULTISIG,
-                                "CHECKMULTISIG ECDSA w/ STRICTENC",
-                                SCRIPT_VERIFY_STRICTENC)
-                        .Num(0)
-                        .PushSigECDSA(keys.key0));
-    tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0)
-                                          << OP_1 << OP_CHECKMULTISIG,
-                                "CHECKMULTISIG Schnorr w/ STRICTENC,SCHNORR",
-                                SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
-                        .Num(0)
-                        .PushSigSchnorr(keys.key0)
-                        .ScriptError(SCRIPT_ERR_SIG_BADLENGTH));
-    tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0)
-                                          << OP_1 << OP_CHECKMULTISIG,
-                                "CHECKMULTISIG ECDSA w/ STRICTENC,SCHNORR",
-                                SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
-                        .Num(0)
-                        .PushSigECDSA(keys.key0));
+                        .SetScriptError(ScriptError::SIG_BADLENGTH));
 
     // Test multisig with multiple Schnorr signatures
     tests.push_back(TestBuilder(CScript() << OP_3 << ToByteVector(keys.pubkey0C)
                                           << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_3
                                           << OP_CHECKMULTISIG,
-                                "Schnorr 3-of-3 without SCHNORR flag", 0)
+                                "Schnorr 3-of-3", 0)
                         .Num(0)
                         .PushSigSchnorr(keys.key0)
                         .PushSigSchnorr(keys.key1)
                         .PushSigSchnorr(keys.key2)
-                        .ScriptError(SCRIPT_ERR_EVAL_FALSE));
-
+                        .SetScriptError(ScriptError::SIG_BADLENGTH));
     tests.push_back(TestBuilder(CScript() << OP_3 << ToByteVector(keys.pubkey0C)
                                           << ToByteVector(keys.pubkey1C)
                                           << ToByteVector(keys.pubkey2C) << OP_3
                                           << OP_CHECKMULTISIG,
-                                "Schnorr 3-of-3 with SCHNORR flag",
-                                SCRIPT_ENABLE_SCHNORR)
-                        .Num(0)
-                        .PushSigSchnorr(keys.key0)
-                        .PushSigSchnorr(keys.key1)
-                        .PushSigSchnorr(keys.key2)
-                        .ScriptError(SCRIPT_ERR_SIG_BADLENGTH));
-
-    tests.push_back(TestBuilder(CScript() << OP_3 << ToByteVector(keys.pubkey0C)
-                                          << ToByteVector(keys.pubkey1C)
-                                          << ToByteVector(keys.pubkey2C) << OP_3
-                                          << OP_CHECKMULTISIG,
-                                "Schnorr-ECDSA-mixed 3-of-3 with SCHNORR flag",
-                                SCRIPT_ENABLE_SCHNORR)
+                                "Schnorr-ECDSA-mixed 3-of-3", 0)
                         .Num(0)
                         .PushSigECDSA(keys.key0)
                         .PushSigECDSA(keys.key1)
                         .PushSigSchnorr(keys.key2)
-                        .ScriptError(SCRIPT_ERR_SIG_BADLENGTH));
+                        .SetScriptError(ScriptError::SIG_BADLENGTH));
 
-    // CHECKMULTISIGVERIFY 1-of-1
+    // CHECKMULTISIGVERIFY 1-of-1 and Schnorr
     tests.push_back(
         TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0) << OP_1
                               << OP_CHECKMULTISIGVERIFY << OP_1,
-                    "CHECKMULTISIGVERIFY Schnorr w/ neither STRICTENC,SCHNORR",
-                    0)
+                    "CHECKMULTISIGVERIFY Schnorr w/ no STRICTENC", 0)
             .Num(0)
             .PushSigSchnorr(keys.key0)
-            .ScriptError(SCRIPT_ERR_CHECKMULTISIGVERIFY));
-    tests.push_back(
-        TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0) << OP_1
-                              << OP_CHECKMULTISIGVERIFY << OP_1,
-                    "CHECKMULTISIGVERIFY ECDSA w/ neither STRICTENC,SCHNORR", 0)
-            .Num(0)
-            .PushSigECDSA(keys.key0));
-    tests.push_back(TestBuilder(CScript()
-                                    << OP_1 << ToByteVector(keys.pubkey0)
-                                    << OP_1 << OP_CHECKMULTISIGVERIFY << OP_1,
-                                "CHECKMULTISIGVERIFY Schnorr w/ SCHNORR",
-                                SCRIPT_ENABLE_SCHNORR)
-                        .Num(0)
-                        .PushSigSchnorr(keys.key0)
-                        .ScriptError(SCRIPT_ERR_SIG_BADLENGTH));
-    tests.push_back(TestBuilder(CScript()
-                                    << OP_1 << ToByteVector(keys.pubkey0)
-                                    << OP_1 << OP_CHECKMULTISIGVERIFY << OP_1,
-                                "CHECKMULTISIGVERIFY ECDSA w/ SCHNORR",
-                                SCRIPT_ENABLE_SCHNORR)
-                        .Num(0)
-                        .PushSigECDSA(keys.key0));
+            .SetScriptError(ScriptError::SIG_BADLENGTH));
     tests.push_back(TestBuilder(CScript()
                                     << OP_1 << ToByteVector(keys.pubkey0)
                                     << OP_1 << OP_CHECKMULTISIGVERIFY << OP_1,
@@ -1968,109 +1581,84 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                 SCRIPT_VERIFY_STRICTENC)
                         .Num(0)
                         .PushSigSchnorr(keys.key0)
-                        .ScriptError(SCRIPT_ERR_SIG_DER));
-    tests.push_back(TestBuilder(CScript()
-                                    << OP_1 << ToByteVector(keys.pubkey0)
-                                    << OP_1 << OP_CHECKMULTISIGVERIFY << OP_1,
-                                "CHECKMULTISIGVERIFY ECDSA w/ STRICTENC",
-                                SCRIPT_VERIFY_STRICTENC)
-                        .Num(0)
-                        .PushSigECDSA(keys.key0));
-    tests.push_back(
-        TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0) << OP_1
-                              << OP_CHECKMULTISIGVERIFY << OP_1,
-                    "CHECKMULTISIGVERIFY Schnorr w/ STRICTENC,SCHNORR",
-                    SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
-            .Num(0)
-            .PushSigSchnorr(keys.key0)
-            .ScriptError(SCRIPT_ERR_SIG_BADLENGTH));
-    tests.push_back(
-        TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0) << OP_1
-                              << OP_CHECKMULTISIGVERIFY << OP_1,
-                    "CHECKMULTISIGVERIFY ECDSA w/ STRICTENC,SCHNORR",
-                    SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
-            .Num(0)
-            .PushSigECDSA(keys.key0));
+                        .SetScriptError(ScriptError::SIG_BADLENGTH));
 
     // Test damaged Schnorr signatures
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
                                           << OP_CHECKSIG << OP_NOT,
-                                "Schnorr P2PK, bad sig", SCRIPT_ENABLE_SCHNORR)
+                                "Schnorr P2PK, bad sig", 0)
                         .PushSigSchnorr(keys.key0)
                         .DamagePush(10));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
                                           << OP_CHECKSIG << OP_NOT,
                                 "Schnorr P2PK, bad sig STRICTENC",
-                                SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC)
+                                SCRIPT_VERIFY_STRICTENC)
                         .PushSigSchnorr(keys.key0)
                         .DamagePush(10));
     tests.push_back(TestBuilder(CScript() << ToByteVector(keys.pubkey0)
                                           << OP_CHECKSIG << OP_NOT,
                                 "Schnorr P2PK, bad sig NULLFAIL",
-                                SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_NULLFAIL)
+                                SCRIPT_VERIFY_NULLFAIL)
                         .PushSigSchnorr(keys.key0)
                         .DamagePush(10)
-                        .ScriptError(SCRIPT_ERR_SIG_NULLFAIL));
+                        .SetScriptError(ScriptError::SIG_NULLFAIL));
 
     // Make sure P2PKH works with Schnorr
     tests.push_back(TestBuilder(CScript() << OP_DUP << OP_HASH160
                                           << ToByteVector(keys.pubkey1C.GetID())
                                           << OP_EQUALVERIFY << OP_CHECKSIG,
-                                "Schnorr P2PKH", SCRIPT_ENABLE_SCHNORR)
+                                "Schnorr P2PKH", 0)
                         .PushSigSchnorr(keys.key1)
                         .Push(keys.pubkey1C));
 
-    // Test of different pubkey encodings
+    // Test of different pubkey encodings with Schnorr
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0C) << OP_CHECKSIG,
                     "Schnorr P2PK with compressed pubkey",
-                    SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SCHNORR)
+                    SCRIPT_VERIFY_STRICTENC)
             .PushSigSchnorr(keys.key0, SigHashType()));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
                     "Schnorr P2PK with uncompressed pubkey",
-                    SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SCHNORR)
+                    SCRIPT_VERIFY_STRICTENC)
             .PushSigSchnorr(keys.key0, SigHashType()));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0) << OP_CHECKSIG,
                     "Schnorr P2PK with uncompressed pubkey but "
                     "COMPRESSED_PUBKEYTYPE set",
-                    SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SCHNORR |
+                    SCRIPT_VERIFY_STRICTENC |
                         SCRIPT_VERIFY_COMPRESSED_PUBKEYTYPE)
             .PushSigSchnorr(keys.key0, SigHashType())
-            .ScriptError(SCRIPT_ERR_NONCOMPRESSED_PUBKEY));
+            .SetScriptError(ScriptError::NONCOMPRESSED_PUBKEY));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKSIG,
-                    "Schnorr P2PK with hybrid pubkey",
-                    SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SCHNORR)
+                    "Schnorr P2PK with hybrid pubkey", SCRIPT_VERIFY_STRICTENC)
             .PushSigSchnorr(keys.key0, SigHashType())
-            .ScriptError(SCRIPT_ERR_PUBKEYTYPE));
+            .SetScriptError(ScriptError::PUBKEYTYPE));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKSIG,
-                    "Schnorr P2PK with hybrid pubkey but no STRICTENC",
-                    SCRIPT_ENABLE_SCHNORR)
+                    "Schnorr P2PK with hybrid pubkey but no STRICTENC", 0)
             .PushSigSchnorr(keys.key0));
     tests.push_back(
         TestBuilder(
             CScript() << ToByteVector(keys.pubkey0H) << OP_CHECKSIG << OP_NOT,
-            "Schnorr P2PK NOT with damaged hybrid pubkey but no STRICTENC",
-            SCRIPT_ENABLE_SCHNORR)
+            "Schnorr P2PK NOT with damaged hybrid pubkey but no STRICTENC", 0)
             .PushSigSchnorr(keys.key0)
             .DamagePush(10));
 
-    // Ensure sighash types still get checked with schnorr
+    // Ensure sighash types get checked with schnorr
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG,
                     "Schnorr P2PK with undefined basehashtype and STRICTENC",
-                    SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SCHNORR)
+                    SCRIPT_VERIFY_STRICTENC)
             .PushSigSchnorr(keys.key1, SigHashType(5))
-            .ScriptError(SCRIPT_ERR_SIG_HASHTYPE));
+            .SetScriptError(ScriptError::SIG_HASHTYPE));
     tests.push_back(
         TestBuilder(CScript() << OP_DUP << OP_HASH160
                               << ToByteVector(keys.pubkey0.GetID())
                               << OP_EQUALVERIFY << OP_CHECKSIG,
                     "Schnorr P2PKH with invalid sighashtype but no STRICTENC",
-                    SCRIPT_ENABLE_SCHNORR)
+                    0)
             .PushSigSchnorr(keys.key0, SigHashType(0x21), Amount::zero(), 0)
             .Push(keys.pubkey0));
     tests.push_back(
@@ -2078,151 +1666,573 @@ BOOST_AUTO_TEST_CASE(script_build) {
                               << ToByteVector(keys.pubkey0.GetID())
                               << OP_EQUALVERIFY << OP_CHECKSIG,
                     "Schnorr P2PKH with invalid sighashtype and STRICTENC",
-                    SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SCHNORR)
+                    SCRIPT_VERIFY_STRICTENC)
             .PushSigSchnorr(keys.key0, SigHashType(0x21), Amount::zero(),
-                            SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SCHNORR)
+                            SCRIPT_VERIFY_STRICTENC)
             .Push(keys.pubkey0)
-            .ScriptError(SCRIPT_ERR_SIG_HASHTYPE));
+            .SetScriptError(ScriptError::SIG_HASHTYPE));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG,
-                    "Schnorr P2PK anyonecanpay", SCRIPT_ENABLE_SCHNORR)
+                    "Schnorr P2PK anyonecanpay", 0)
             .PushSigSchnorr(keys.key1, SigHashType().withAnyoneCanPay()));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG,
-                    "Schnorr P2PK anyonecanpay marked with normal hashtype",
-                    SCRIPT_ENABLE_SCHNORR)
+                    "Schnorr P2PK anyonecanpay marked with normal hashtype", 0)
             .PushSigSchnorr(keys.key1, SigHashType().withAnyoneCanPay())
             .EditPush(64, "81", "01")
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG,
                     "Schnorr P2PK with forkID",
-                    SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC |
-                        SCRIPT_ENABLE_SIGHASH_FORKID)
+                    SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SIGHASH_FORKID)
             .PushSigSchnorr(keys.key1, SigHashType().withForkId()));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG,
                     "Schnorr P2PK with non-forkID sig",
-                    SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC |
-                        SCRIPT_ENABLE_SIGHASH_FORKID)
+                    SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SIGHASH_FORKID)
             .PushSigSchnorr(keys.key1)
-            .ScriptError(SCRIPT_ERR_MUST_USE_FORKID));
+            .SetScriptError(ScriptError::MUST_USE_FORKID));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG,
                     "Schnorr P2PK with cheater forkID bit",
-                    SCRIPT_ENABLE_SCHNORR | SCRIPT_VERIFY_STRICTENC |
-                        SCRIPT_ENABLE_SIGHASH_FORKID)
+                    SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_SIGHASH_FORKID)
             .PushSigSchnorr(keys.key1)
             .EditPush(64, "01", "41")
-            .ScriptError(SCRIPT_ERR_EVAL_FALSE));
+            .SetScriptError(ScriptError::EVAL_FALSE));
 
-    // Tests SCRIPT_ALLOW_SEGWIT_RECOVERY
-    const uint32_t allowSegwitRecoveryFlags = SCRIPT_VERIFY_CLEANSTACK |
-                                              SCRIPT_VERIFY_P2SH |
-                                              SCRIPT_ALLOW_SEGWIT_RECOVERY;
+    {
+        // There is a point with x = 7 + order but not x = 7.
+        // Since r = x mod order, this can have valid signatures, as
+        // demonstrated here.
+        std::vector<uint8_t> rdata{7};
+        std::vector<uint8_t> sdata{7};
+        tests.push_back(TestBuilder(CScript() << OP_CHECKSIG,
+                                    "recovered-pubkey CHECKSIG 7,7 (wrapped r)",
+                                    SCRIPT_VERIFY_STRICTENC)
+                            .PushECDSASigFromParts(rdata, sdata)
+                            .PushECDSARecoveredPubKey(rdata, sdata));
+    }
+    {
+        // Arbitrary r value that is 29 bytes long, to give room for varying
+        // the length of s:
+        std::vector<uint8_t> rdata = ParseHex(
+            "776879206d757374207765207375666665722077697468206563647361");
+        std::vector<uint8_t> sdata(58 - rdata.size() - 1, 33);
+        tests.push_back(
+            TestBuilder(CScript() << OP_CHECKSIG,
+                        "recovered-pubkey CHECKSIG with 63-byte DER",
+                        SCRIPT_VERIFY_STRICTENC)
+                .PushECDSASigFromParts(rdata, sdata)
+                .PushECDSARecoveredPubKey(rdata, sdata));
+    }
+    {
+        // 64-byte ECDSA sig does not work.
+        std::vector<uint8_t> rdata = ParseHex(
+            "776879206d757374207765207375666665722077697468206563647361");
+        std::vector<uint8_t> sdata(58 - rdata.size(), 33);
+        tests.push_back(
+            TestBuilder(CScript() << OP_CHECKSIG,
+                        "recovered-pubkey CHECKSIG with 64-byte DER",
+                        SCRIPT_VERIFY_STRICTENC)
+                .PushECDSASigFromParts(rdata, sdata)
+                .PushECDSARecoveredPubKey(rdata, sdata)
+                .SetScriptError(ScriptError::EVAL_FALSE));
+    }
+    {
+        std::vector<uint8_t> rdata = ParseHex(
+            "776879206d757374207765207375666665722077697468206563647361");
+        std::vector<uint8_t> sdata(58 - rdata.size() + 1, 33);
+        tests.push_back(
+            TestBuilder(CScript() << OP_CHECKSIG,
+                        "recovered-pubkey CHECKSIG with 65-byte DER",
+                        SCRIPT_VERIFY_STRICTENC)
+                .PushECDSASigFromParts(rdata, sdata)
+                .PushECDSARecoveredPubKey(rdata, sdata));
+    }
+    {
+        // Try 64-byte ECDSA sig again, in multisig.
+        std::vector<uint8_t> rdata = ParseHex(
+            "776879206d757374207765207375666665722077697468206563647361");
+        std::vector<uint8_t> sdata(58 - rdata.size(), 33);
+        tests.push_back(
+            TestBuilder(CScript()
+                            << OP_1 << OP_SWAP << OP_1 << OP_CHECKMULTISIG,
+                        "recovered-pubkey CHECKMULTISIG with 64-byte DER",
+                        SCRIPT_VERIFY_STRICTENC)
+                .Num(0)
+                .PushECDSASigFromParts(rdata, sdata)
+                .PushECDSARecoveredPubKey(rdata, sdata)
+                .SetScriptError(ScriptError::SIG_BADLENGTH));
+    }
+
+    // New-multisig tests follow. New multisig will activate with a bunch of
+    // related flags active from other upgrades, so we do tests with this group
+    // of flags turned on:
+    uint32_t newmultisigflags =
+        SCRIPT_ENABLE_SCHNORR_MULTISIG | SCRIPT_VERIFY_NULLFAIL |
+        SCRIPT_VERIFY_MINIMALDATA | SCRIPT_VERIFY_STRICTENC;
+
+    // Tests of the legacy multisig (null dummy element), but with the
+    // SCRIPT_ENABLE_SCHNORR_MULTISIG flag turned on. These show the desired
+    // legacy behaviour that should be retained.
     tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0.GetID()),
-                    "v0 P2SH-P2WPKH but no SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    SCRIPT_VERIFY_CLEANSTACK | SCRIPT_VERIFY_P2SH, true)
-            .PushRedeem()
-            .ScriptError(SCRIPT_ERR_CLEANSTACK));
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0.GetID()),
-                    "v0 P2SH-P2WPKH with SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    allowSegwitRecoveryFlags, true)
-            .PushRedeem());
-    tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(keys.pubkey0.GetID()),
-                    "v0 P2SH-P2WPKH with extra stack item and "
-                    "SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    allowSegwitRecoveryFlags, true)
+        TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0H)
+                              << ToByteVector(keys.pubkey1C) << OP_2
+                              << OP_CHECKMULTISIG,
+                    "1-of-2 with unchecked hybrid pubkey with SCHNORR_MULTISIG",
+                    newmultisigflags)
             .Num(0)
-            .PushRedeem()
-            .ScriptError(SCRIPT_ERR_CLEANSTACK));
-    uint256 dummy256(std::vector<uint8_t>(
-        {90, 1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,
-         16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31}));
+            .PushSigECDSA(keys.key1));
     tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(dummy256),
-                    "v0 P2SH-P2WSH but no SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    SCRIPT_VERIFY_CLEANSTACK | SCRIPT_VERIFY_P2SH, true)
-            .PushRedeem()
-            .ScriptError(SCRIPT_ERR_CLEANSTACK));
+        TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(keys.pubkey0H) << OP_2
+                              << OP_CHECKMULTISIG,
+                    "1-of-2 with checked hybrid pubkey with SCHNORR_MULTISIG",
+                    newmultisigflags)
+            .Num(0)
+            .PushSigECDSA(keys.key1)
+            .SetScriptError(ScriptError::PUBKEYTYPE));
     tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(dummy256),
-                    "v0 P2SH-P2WSH with SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    allowSegwitRecoveryFlags, true)
-            .PushRedeem());
-    tests.push_back(TestBuilder(CScript() << OP_0 << ToByteVector(dummy256),
-                                "v0 P2SH-P2WSH with extra stack item and "
-                                "SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                                allowSegwitRecoveryFlags, true)
+        TestBuilder(
+            CScript() << OP_1 << ToByteVector(keys.pubkey0) << OP_1
+                      << OP_CHECKMULTISIG,
+            "Legacy 1-of-1 Schnorr w/ SCHNORR_MULTISIG but no STRICTENC",
+            newmultisigflags & ~SCRIPT_VERIFY_STRICTENC)
+            .Num(0)
+            .PushSigSchnorr(keys.key0)
+            .SetScriptError(ScriptError::SIG_BADLENGTH));
+    tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0)
+                                          << OP_1 << OP_CHECKMULTISIG,
+                                "Legacy 1-of-1 Schnorr w/ SCHNORR_MULTISIG",
+                                newmultisigflags)
                         .Num(0)
-                        .PushRedeem()
-                        .ScriptError(SCRIPT_ERR_CLEANSTACK));
-    // Tests the limits of IsWitnessProgram along with
-    // SCRIPT_ALLOW_SEGWIT_RECOVERY
-    std::vector<uint8_t> shortprogram({90, 1});
+                        .PushSigSchnorr(keys.key0)
+                        .SetScriptError(ScriptError::SIG_BADLENGTH));
+    tests.push_back(TestBuilder(CScript() << OP_3 << ToByteVector(keys.pubkey0C)
+                                          << ToByteVector(keys.pubkey1C)
+                                          << ToByteVector(keys.pubkey2C) << OP_3
+                                          << OP_CHECKMULTISIG,
+                                "Legacy 3-of-3 Schnorr w/ SCHNORR_MULTISIG",
+                                newmultisigflags)
+                        .Num(0)
+                        .PushSigSchnorr(keys.key0)
+                        .PushSigSchnorr(keys.key1)
+                        .PushSigSchnorr(keys.key2)
+                        .SetScriptError(ScriptError::SIG_BADLENGTH));
     tests.push_back(
-        TestBuilder(CScript() << OP_0
-                              << std::vector<uint8_t>(shortprogram.begin(),
-                                                      shortprogram.end() - 1),
-                    "Invalid witness program (too short) with "
-                    "SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    allowSegwitRecoveryFlags, true)
-            .PushRedeem()
-            .ScriptError(SCRIPT_ERR_CLEANSTACK));
+        TestBuilder(CScript() << OP_3 << ToByteVector(keys.pubkey0C)
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(keys.pubkey2C) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "Legacy 3-of-3 mixed Schnorr-ECDSA w/ SCHNORR_MULTISIG",
+                    newmultisigflags)
+            .Num(0)
+            .PushSigECDSA(keys.key0)
+            .PushSigECDSA(keys.key1)
+            .PushSigSchnorr(keys.key2)
+            .SetScriptError(ScriptError::SIG_BADLENGTH));
+    {
+        // Try valid 64-byte ECDSA sig in multisig.
+        std::vector<uint8_t> rdata = ParseHex(
+            "776879206d757374207765207375666665722077697468206563647361");
+        std::vector<uint8_t> sdata(58 - rdata.size(), 33);
+        tests.push_back(TestBuilder(CScript() << OP_1 << OP_SWAP << OP_1
+                                              << OP_CHECKMULTISIG,
+                                    "recovered-pubkey CHECKMULTISIG with "
+                                    "64-byte DER w/ SCHNORR_MULTISIG",
+                                    newmultisigflags)
+                            .Num(0)
+                            .PushECDSASigFromParts(rdata, sdata)
+                            .PushECDSARecoveredPubKey(rdata, sdata)
+                            .SetScriptError(ScriptError::SIG_BADLENGTH));
+    }
+    tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                                          << ToByteVector(keys.pubkey1C)
+                                          << ToByteVector(keys.pubkey2C) << OP_3
+                                          << OP_CHECKMULTISIG << OP_NOT,
+                                "CHECKMULTISIG 2-of-3 w/ SCHNORR_MULTISIG "
+                                "(return-false still valid via legacy mode)",
+                                newmultisigflags)
+                        .Num(0)
+                        .Num(0)
+                        .Num(0));
+    tests.push_back(TestBuilder(CScript() << OP_0 << OP_0 << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 0-of-0 w/ SCHNORR_MULTISIG",
+                                newmultisigflags)
+                        .Num(0));
     tests.push_back(
-        TestBuilder(CScript() << OP_0 << shortprogram,
-                    "Valid witness program (min allowed length) with "
-                    "SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    allowSegwitRecoveryFlags, true)
-            .PushRedeem());
-    std::vector<uint8_t> longprogram(
-        {90, 1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13,
-         14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-         28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40});
+        TestBuilder(CScript() << OP_0 << ToByteVector(ParseHex("BEEF")) << OP_1
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 0-of-1 w/ SCHNORR_MULTISIG, null dummy",
+                    newmultisigflags)
+            .Num(0));
+
+    // Tests of schnorr checkmultisig actually turned on (flag on & dummy
+    // element is not null).
+    tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0)
+                                          << OP_1 << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 1-of-1 Schnorr",
+                                newmultisigflags)
+                        .Num(0b1)
+                        .PushSigSchnorr(keys.key0));
+    tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0)
+                                          << OP_1 << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 1-of-1 Schnorr, nonminimal bits",
+                                newmultisigflags)
+                        .Push("0100")
+                        .PushSigSchnorr(keys.key0)
+                        .SetScriptError(ScriptError::INVALID_BITFIELD_SIZE));
+    tests.push_back(TestBuilder(CScript() << OP_3 << ToByteVector(keys.pubkey0C)
+                                          << ToByteVector(keys.pubkey1C)
+                                          << ToByteVector(keys.pubkey2C) << OP_3
+                                          << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 3-of-3 Schnorr",
+                                newmultisigflags)
+                        .Num(0b111)
+                        .PushSigSchnorr(keys.key0)
+                        .PushSigSchnorr(keys.key1)
+                        .PushSigSchnorr(keys.key2));
+    tests.push_back(TestBuilder(CScript() << OP_4 << ToByteVector(keys.pubkey0C)
+                                          << ToByteVector(keys.pubkey1C)
+                                          << ToByteVector(keys.pubkey2C) << OP_3
+                                          << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 4-of-3 Schnorr",
+                                newmultisigflags)
+                        .Num(0b1111)
+                        .PushSigSchnorr(keys.key0)
+                        .PushSigSchnorr(keys.key0)
+                        .PushSigSchnorr(keys.key1)
+                        .PushSigSchnorr(keys.key2)
+                        .SetScriptError(ScriptError::SIG_COUNT));
+    tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                                          << ToByteVector(keys.pubkey1C)
+                                          << ToByteVector(keys.pubkey2C) << OP_3
+                                          << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 2-of-3 (110) Schnorr",
+                                newmultisigflags)
+                        .Num(0b110)
+                        .PushSigSchnorr(keys.key1)
+                        .PushSigSchnorr(keys.key2));
+    tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                                          << ToByteVector(keys.pubkey1C)
+                                          << ToByteVector(keys.pubkey2C) << OP_3
+                                          << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 2-of-3 (101) Schnorr",
+                                newmultisigflags)
+                        .Num(0b101)
+                        .PushSigSchnorr(keys.key0)
+                        .PushSigSchnorr(keys.key2));
+    tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                                          << ToByteVector(keys.pubkey1C)
+                                          << ToByteVector(keys.pubkey2C) << OP_3
+                                          << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 2-of-3 (011) Schnorr",
+                                newmultisigflags)
+                        .Num(0b011)
+                        .PushSigSchnorr(keys.key0)
+                        .PushSigSchnorr(keys.key1));
     tests.push_back(
-        TestBuilder(CScript() << OP_0
-                              << std::vector<uint8_t>(longprogram.begin(),
-                                                      longprogram.end() - 1),
-                    "Valid witness program (max allowed length) with "
-                    "SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    allowSegwitRecoveryFlags, true)
-            .PushRedeem());
-    tests.push_back(TestBuilder(CScript() << OP_0 << longprogram,
-                                "Invalid witness program (too long) with "
-                                "SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                                allowSegwitRecoveryFlags, true)
-                        .PushRedeem()
-                        .ScriptError(SCRIPT_ERR_CLEANSTACK));
+        TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(keys.pubkey2C) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 2-of-3 Schnorr, mismatched bits Schnorr",
+                    newmultisigflags)
+            .Num(0b011)
+            .PushSigSchnorr(keys.key0)
+            .PushSigSchnorr(keys.key2)
+            .SetScriptError(ScriptError::SIG_NULLFAIL));
+    tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                                          << ToByteVector(keys.pubkey1C)
+                                          << ToByteVector(keys.pubkey2C) << OP_3
+                                          << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 2-of-3 Schnorr, all bits set",
+                                newmultisigflags)
+                        .Num(0b111)
+                        .PushSigSchnorr(keys.key1)
+                        .PushSigSchnorr(keys.key2)
+                        .SetScriptError(ScriptError::INVALID_BIT_COUNT));
     tests.push_back(
-        TestBuilder(CScript() << OP_16 << ToByteVector(dummy256),
-                    "Valid witness program (max allowed version) with "
-                    "SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    allowSegwitRecoveryFlags, true)
-            .PushRedeem());
+        TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(keys.pubkey2C) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 2-of-3 Schnorr, extra high bit set",
+                    newmultisigflags)
+            .Num(0b1110)
+            .PushSigSchnorr(keys.key0)
+            .PushSigSchnorr(keys.key1)
+            .SetScriptError(ScriptError::INVALID_BIT_RANGE));
     tests.push_back(
-        TestBuilder(CScript() << OP_1NEGATE << ToByteVector(dummy256),
-                    "Invalid witness program (invalid version -1) with "
-                    "SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    allowSegwitRecoveryFlags, true)
-            .PushRedeem()
-            .ScriptError(SCRIPT_ERR_CLEANSTACK));
+        TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(keys.pubkey2C) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 2-of-3 Schnorr, too high bit set",
+                    newmultisigflags)
+            .Num(0b1010)
+            .PushSigSchnorr(keys.key0)
+            .PushSigSchnorr(keys.key1)
+            .SetScriptError(ScriptError::INVALID_BIT_RANGE));
     tests.push_back(
-        TestBuilder(CScript() << 17 << ToByteVector(dummy256),
-                    "Invalid witness program (invalid version 17) with "
-                    "SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    allowSegwitRecoveryFlags, true)
-            .PushRedeem()
-            .ScriptError(SCRIPT_ERR_CLEANSTACK));
+        TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(keys.pubkey2C) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 2-of-3 Schnorr, too few bits set",
+                    newmultisigflags)
+            .Num(0b010)
+            .PushSigSchnorr(keys.key0)
+            .PushSigSchnorr(keys.key1)
+            .SetScriptError(ScriptError::INVALID_BIT_COUNT));
     tests.push_back(
-        TestBuilder(CScript() << OP_0 << ToByteVector(dummy256) << OP_1,
-                    "Invalid witness program (more than 2 stack "
-                    "items) with SCRIPT_ALLOW_SEGWIT_RECOVERY",
-                    allowSegwitRecoveryFlags, true)
-            .PushRedeem()
-            .ScriptError(SCRIPT_ERR_CLEANSTACK));
+        TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(keys.pubkey2C) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 2-of-3 Schnorr, with no bits set "
+                    "(attempt to malleate return-false)",
+                    newmultisigflags)
+            .Push("00")
+            .Num(0)
+            .Num(0)
+            .SetScriptError(ScriptError::INVALID_BIT_COUNT));
+    tests.push_back(TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                                          << ToByteVector(keys.pubkey1C)
+                                          << ToByteVector(keys.pubkey2C) << OP_3
+                                          << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG null dummy with schnorr sigs "
+                                "(with SCHNORR_MULTISIG on)",
+                                newmultisigflags)
+                        .Num(0)
+                        .PushSigSchnorr(keys.key0)
+                        .PushSigSchnorr(keys.key1)
+                        .SetScriptError(ScriptError::SIG_BADLENGTH));
+    tests.push_back(
+        TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(keys.pubkey2C) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 2-of-3 Schnorr, misordered signatures",
+                    newmultisigflags)
+            .Num(0b011)
+            .PushSigSchnorr(keys.key1)
+            .PushSigSchnorr(keys.key0)
+            .SetScriptError(ScriptError::SIG_NULLFAIL));
+    tests.push_back(
+        TestBuilder(
+            CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                      << ToByteVector(keys.pubkey1C) << OP_DUP << OP_2DUP
+                      << OP_2DUP << ToByteVector(keys.pubkey2C) << OP_8
+                      << OP_CHECKMULTISIG,
+            "CHECKMULTISIG 2-of-8 Schnorr, right way to represent 0b10000001",
+            newmultisigflags)
+            .Num(-1)
+            .PushSigSchnorr(keys.key0)
+            .PushSigSchnorr(keys.key2));
+    tests.push_back(
+        TestBuilder(
+            CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                      << ToByteVector(keys.pubkey1C) << OP_DUP << OP_2DUP
+                      << OP_2DUP << ToByteVector(keys.pubkey2C) << OP_8
+                      << OP_CHECKMULTISIG,
+            "CHECKMULTISIG 2-of-8 Schnorr, wrong way to represent 0b10000001",
+            newmultisigflags)
+            .Num(0b10000001)
+            .PushSigSchnorr(keys.key0)
+            .PushSigSchnorr(keys.key2)
+            .SetScriptError(ScriptError::INVALID_BITFIELD_SIZE));
+    tests.push_back(
+        TestBuilder(CScript()
+                        << OP_OVER << OP_DUP << OP_DUP << OP_2DUP << OP_3DUP
+                        << OP_3DUP << OP_3DUP << OP_3DUP << 20
+                        << ToByteVector(keys.pubkey0C)
+                        << ToByteVector(keys.pubkey1C)
+                        << ToByteVector(keys.pubkey2C) << OP_OVER << OP_DUP
+                        << OP_DUP << OP_2DUP << OP_3DUP << OP_3DUP << OP_3DUP
+                        << OP_3DUP << 20 << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 20-of-20 Schnorr", newmultisigflags)
+            .Push("ffff0f")
+            .PushSigSchnorr(keys.key0)
+            .PushSigSchnorr(keys.key1)
+            .PushSigSchnorr(keys.key2));
+    tests.push_back(
+        TestBuilder(
+            CScript() << OP_OVER << OP_DUP << OP_DUP << OP_2DUP << OP_3DUP
+                      << OP_3DUP << OP_3DUP << OP_3DUP << 20
+                      << ToByteVector(keys.pubkey0C)
+                      << ToByteVector(keys.pubkey1C)
+                      << ToByteVector(keys.pubkey2C) << OP_OVER << OP_DUP
+                      << OP_DUP << OP_2DUP << OP_3DUP << OP_3DUP << OP_3DUP
+                      << OP_3DUP << 20 << OP_CHECKMULTISIG,
+            "CHECKMULTISIG 20-of-20 Schnorr, checkbits +1", newmultisigflags)
+            .Push("000010")
+            .PushSigSchnorr(keys.key0)
+            .PushSigSchnorr(keys.key1)
+            .PushSigSchnorr(keys.key2)
+            .SetScriptError(ScriptError::INVALID_BIT_RANGE));
+    tests.push_back(
+        TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0C) << OP_DUP
+                              << ToByteVector(keys.pubkey1C) << OP_3DUP
+                              << OP_3DUP << OP_3DUP << OP_3DUP << OP_3DUP
+                              << OP_3DUP << 21 << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 1-of-21 Schnorr", newmultisigflags)
+            .Push("000010")
+            .PushSigSchnorr(keys.key0)
+            .SetScriptError(ScriptError::PUBKEY_COUNT));
+    tests.push_back(TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0C)
+                                          << ToByteVector(keys.pubkey1C)
+                                          << OP_DUP << OP_2DUP << OP_3DUP
+                                          << OP_3DUP << OP_3DUP << OP_3DUP
+                                          << OP_3DUP << 20 << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 1-of-20 Schnorr, first key",
+                                newmultisigflags)
+                        .Push("010000")
+                        .PushSigSchnorr(keys.key0));
+    tests.push_back(
+        TestBuilder(
+            CScript() << OP_1 << ToByteVector(keys.pubkey0C)
+                      << ToByteVector(keys.pubkey1C) << OP_DUP << OP_2DUP
+                      << OP_3DUP << OP_3DUP << OP_3DUP << OP_3DUP << OP_3DUP
+                      << 20 << OP_CHECKMULTISIG,
+            "CHECKMULTISIG 1-of-20 Schnorr, first key, wrong endianness",
+            newmultisigflags)
+            .Push("000001")
+            .PushSigSchnorr(keys.key0)
+            .SetScriptError(ScriptError::SIG_NULLFAIL));
+    tests.push_back(
+        TestBuilder(
+            CScript() << OP_1 << ToByteVector(keys.pubkey0C) << OP_2DUP
+                      << OP_2DUP << OP_3DUP << OP_3DUP << OP_3DUP << OP_3DUP
+                      << OP_3DUP << 20 << OP_CHECKMULTISIG,
+            "CHECKMULTISIG 1-of-20 Schnorr, truncating zeros not allowed",
+            newmultisigflags)
+            .Num(1)
+            .PushSigSchnorr(keys.key0)
+            .SetScriptError(ScriptError::INVALID_BITFIELD_SIZE));
+    tests.push_back(
+        TestBuilder(CScript()
+                        << OP_1 << ToByteVector(keys.pubkey0C) << OP_DUP
+                        << OP_2DUP << OP_3DUP << OP_3DUP << OP_3DUP << OP_3DUP
+                        << OP_3DUP << ToByteVector(keys.pubkey1C) << 20
+                        << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 1-of-20 Schnorr, last key", newmultisigflags)
+            .Push("000008")
+            .PushSigSchnorr(keys.key1));
+    tests.push_back(
+        TestBuilder(CScript()
+                        << OP_1 << ToByteVector(keys.pubkey0C) << OP_DUP
+                        << OP_2DUP << OP_3DUP << OP_3DUP << OP_3DUP << OP_3DUP
+                        << OP_3DUP << ToByteVector(keys.pubkey1C) << 20
+                        << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 1-of-20 Schnorr, last key, wrong endianness",
+                    newmultisigflags)
+            .Push("080000")
+            .PushSigSchnorr(keys.key1)
+            .SetScriptError(ScriptError::SIG_NULLFAIL));
+    tests.push_back(TestBuilder(CScript()
+                                    << OP_1 << ToByteVector(keys.pubkey0C)
+                                    << OP_DUP << OP_2DUP << OP_3DUP << OP_3DUP
+                                    << OP_3DUP << OP_3DUP << OP_3DUP
+                                    << ToByteVector(keys.pubkey1C) << 20
+                                    << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 1-of-20 Schnorr, last key, "
+                                "truncating zeros not allowed",
+                                newmultisigflags)
+                        .Push("0800")
+                        .PushSigSchnorr(keys.key1)
+                        .SetScriptError(ScriptError::INVALID_BITFIELD_SIZE));
+    tests.push_back(
+        TestBuilder(CScript() << OP_2 << ToByteVector(ParseHex("BEEF"))
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(keys.pubkey2C) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 2-of-3 (110) Schnorr, first key garbage",
+                    newmultisigflags)
+            .Num(0b110)
+            .PushSigSchnorr(keys.key1)
+            .PushSigSchnorr(keys.key2));
+    tests.push_back(
+        TestBuilder(CScript() << OP_2 << ToByteVector(ParseHex("BEEF"))
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(keys.pubkey2C) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 2-of-3 (011) Schnorr, first key garbage",
+                    newmultisigflags)
+            .Num(0b011)
+            .PushSigSchnorr(keys.key0)
+            .PushSigSchnorr(keys.key1)
+            .SetScriptError(ScriptError::PUBKEYTYPE));
+    tests.push_back(
+        TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(ParseHex("BEEF")) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 2-of-3 (011) Schnorr, last key garbage",
+                    newmultisigflags)
+            .Num(0b011)
+            .PushSigSchnorr(keys.key0)
+            .PushSigSchnorr(keys.key1));
+    tests.push_back(
+        TestBuilder(CScript() << OP_2 << ToByteVector(keys.pubkey0C)
+                              << ToByteVector(keys.pubkey1C)
+                              << ToByteVector(ParseHex("BEEF")) << OP_3
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 2-of-3 (110) Schnorr, last key garbage",
+                    newmultisigflags)
+            .Num(0b110)
+            .PushSigSchnorr(keys.key1)
+            .PushSigSchnorr(keys.key2)
+            .SetScriptError(ScriptError::PUBKEYTYPE));
+    tests.push_back(
+        TestBuilder(
+            CScript() << OP_0 << OP_0 << OP_CHECKMULTISIG,
+            "CHECKMULTISIG 0-of-0 with SCHNORR_MULTISIG, dummy must be null",
+            newmultisigflags)
+            .Push("00")
+            .SetScriptError(ScriptError::INVALID_BITFIELD_SIZE));
+    tests.push_back(TestBuilder(CScript()
+                                    << OP_0 << ToByteVector(ParseHex("BEEF"))
+                                    << OP_1 << OP_CHECKMULTISIG,
+                                "CHECKMULTISIG 0-of-1 with SCHNORR_MULTISIG, "
+                                "dummy need not be null",
+                                newmultisigflags)
+                        .Push("00"));
+    tests.push_back(
+        TestBuilder(
+            CScript() << OP_1 << ToByteVector(keys.pubkey0) << OP_1
+                      << OP_CHECKMULTISIG,
+            "SCHNORR_MULTISIG implies that NULLDUMMY flag has no effect",
+            newmultisigflags | SCRIPT_VERIFY_NULLDUMMY)
+            .Num(0b1)
+            .PushSigSchnorr(keys.key0));
+    tests.push_back(
+        TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0) << OP_1
+                              << OP_CHECKMULTISIGVERIFY << OP_1,
+                    "OP_CHECKMULTISIGVERIFY Schnorr", newmultisigflags)
+            .Num(0b1)
+            .PushSigSchnorr(keys.key0));
+    tests.push_back(
+        TestBuilder(CScript() << OP_1 << ToByteVector(keys.pubkey0) << OP_1
+                              << OP_CHECKMULTISIG,
+                    "CHECKMULTISIG 1-of-1 ECDSA signature in Schnorr mode",
+                    newmultisigflags)
+            .Num(0b1)
+            .PushSigECDSA(keys.key0)
+            .SetScriptError(ScriptError::SIG_NONSCHNORR));
+    tests.push_back(
+        TestBuilder(
+            CScript() << OP_3 << ToByteVector(keys.pubkey0C)
+                      << ToByteVector(keys.pubkey1C)
+                      << ToByteVector(keys.pubkey2C) << OP_3
+                      << OP_CHECKMULTISIG,
+            "CHECKMULTISIG 3-of-3 Schnorr with mixed-in ECDSA signature",
+            newmultisigflags)
+            .Num(0b111)
+            .PushSigECDSA(keys.key0)
+            .PushSigSchnorr(keys.key1)
+            .PushSigSchnorr(keys.key2)
+            .SetScriptError(ScriptError::SIG_NONSCHNORR));
 
     std::set<std::string> tests_set;
 
@@ -2237,18 +2247,21 @@ BOOST_AUTO_TEST_CASE(script_build) {
         }
     }
 
+#ifdef UPDATE_JSON_TESTS
     std::string strGen;
+#endif
 
     for (TestBuilder &test : tests) {
         test.Test();
         std::string str = JSONPrettyPrint(test.GetJSON());
-#ifndef UPDATE_JSON_TESTS
+#ifdef UPDATE_JSON_TESTS
+        strGen += str + ",\n";
+#else
         if (tests_set.count(str) == 0) {
             BOOST_CHECK_MESSAGE(false, "Missing auto script_valid test: " +
                                            test.GetComment());
         }
 #endif
-        strGen += str + ",\n";
     }
 
 #ifdef UPDATE_JSON_TESTS
@@ -2293,7 +2306,7 @@ BOOST_AUTO_TEST_CASE(script_json_test) {
             CScript scriptSig = ParseScript(scriptSigString);
             CScript scriptPubKey = ParseScript(scriptPubKeyString);
             unsigned int scriptflags = ParseScriptFlags(test[pos++].get_str());
-            int scriptError = ParseScriptError(test[pos++].get_str());
+            ScriptError scriptError = ParseScriptError(test[pos++].get_str());
 
             DoTest(scriptPubKey, scriptSig, scriptflags, strTest, scriptError,
                    nValue);
@@ -2320,32 +2333,33 @@ BOOST_AUTO_TEST_CASE(script_PushData) {
     BOOST_CHECK(EvalScript(directStack,
                            CScript(&direct[0], &direct[sizeof(direct)]),
                            SCRIPT_VERIFY_P2SH, BaseSignatureChecker(), &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
 
     std::vector<std::vector<uint8_t>> pushdata1Stack;
     BOOST_CHECK(EvalScript(
         pushdata1Stack, CScript(&pushdata1[0], &pushdata1[sizeof(pushdata1)]),
         SCRIPT_VERIFY_P2SH, BaseSignatureChecker(), &err));
     BOOST_CHECK(pushdata1Stack == directStack);
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
 
     std::vector<std::vector<uint8_t>> pushdata2Stack;
     BOOST_CHECK(EvalScript(
         pushdata2Stack, CScript(&pushdata2[0], &pushdata2[sizeof(pushdata2)]),
         SCRIPT_VERIFY_P2SH, BaseSignatureChecker(), &err));
     BOOST_CHECK(pushdata2Stack == directStack);
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
 
     std::vector<std::vector<uint8_t>> pushdata4Stack;
     BOOST_CHECK(EvalScript(
         pushdata4Stack, CScript(&pushdata4[0], &pushdata4[sizeof(pushdata4)]),
         SCRIPT_VERIFY_P2SH, BaseSignatureChecker(), &err));
     BOOST_CHECK(pushdata4Stack == directStack);
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
 }
 
-CScript sign_multisig(CScript scriptPubKey, std::vector<CKey> keys,
-                      CTransaction transaction) {
+static CScript sign_multisig(const CScript &scriptPubKey,
+                             const std::vector<CKey> &keys,
+                             const CTransaction &transaction) {
     uint256 hash = SignatureHash(scriptPubKey, transaction, 0, SigHashType(),
                                  Amount::zero());
 
@@ -2367,8 +2381,8 @@ CScript sign_multisig(CScript scriptPubKey, std::vector<CKey> keys,
     return result;
 }
 
-CScript sign_multisig(CScript scriptPubKey, const CKey &key,
-                      CTransaction transaction) {
+static CScript sign_multisig(const CScript &scriptPubKey, const CKey &key,
+                             const CTransaction &transaction) {
     std::vector<CKey> keys;
     keys.push_back(key);
     return sign_multisig(scriptPubKey, keys, transaction);
@@ -2386,8 +2400,8 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG12) {
                    << ToByteVector(key2.GetPubKey()) << OP_2
                    << OP_CHECKMULTISIG;
 
-    CMutableTransaction txFrom12 =
-        BuildCreditingTransaction(scriptPubKey12, Amount::zero());
+    const CTransaction txFrom12{
+        BuildCreditingTransaction(scriptPubKey12, Amount::zero())};
     CMutableTransaction txTo12 = BuildSpendingTransaction(CScript(), txFrom12);
 
     CScript goodsig1 =
@@ -2396,13 +2410,13 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG12) {
         goodsig1, scriptPubKey12, gFlags,
         MutableTransactionSignatureChecker(&txTo12, 0, txFrom12.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
     txTo12.vout[0].nValue = 2 * SATOSHI;
     BOOST_CHECK(!VerifyScript(
         goodsig1, scriptPubKey12, gFlags,
         MutableTransactionSignatureChecker(&txTo12, 0, txFrom12.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::EVAL_FALSE, ScriptErrorString(err));
 
     CScript goodsig2 =
         sign_multisig(scriptPubKey12, key2, CTransaction(txTo12));
@@ -2410,14 +2424,14 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG12) {
         goodsig2, scriptPubKey12, gFlags,
         MutableTransactionSignatureChecker(&txTo12, 0, txFrom12.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
 
     CScript badsig1 = sign_multisig(scriptPubKey12, key3, CTransaction(txTo12));
     BOOST_CHECK(!VerifyScript(
         badsig1, scriptPubKey12, gFlags,
         MutableTransactionSignatureChecker(&txTo12, 0, txFrom12.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::EVAL_FALSE, ScriptErrorString(err));
 }
 
 BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
@@ -2434,16 +2448,14 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
                    << ToByteVector(key3.GetPubKey()) << OP_3
                    << OP_CHECKMULTISIG;
 
-    CMutableTransaction txFrom23 =
-        BuildCreditingTransaction(scriptPubKey23, Amount::zero());
+    const CTransaction txFrom23{
+        BuildCreditingTransaction(scriptPubKey23, Amount::zero())};
     CMutableTransaction mutableTxTo23 =
         BuildSpendingTransaction(CScript(), txFrom23);
 
-    // after it has been set up, mutableTxTo23 does not change in this test,
-    // so we can convert it to readonly transaction and use
-    // TransactionSignatureChecker
-    // instead of MutableTransactionSignatureChecker
-
+    // after it has been set up, mutableTxTo23 does not change in this test, so
+    // we can convert it to readonly transaction and use
+    // TransactionSignatureChecker instead of MutableTransactionSignatureChecker
     const CTransaction txTo23(mutableTxTo23);
 
     std::vector<CKey> keys;
@@ -2454,7 +2466,7 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
         goodsig1, scriptPubKey23, gFlags,
         TransactionSignatureChecker(&txTo23, 0, txFrom23.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
 
     keys.clear();
     keys.push_back(key1);
@@ -2464,7 +2476,7 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
         goodsig2, scriptPubKey23, gFlags,
         TransactionSignatureChecker(&txTo23, 0, txFrom23.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
 
     keys.clear();
     keys.push_back(key2);
@@ -2474,7 +2486,7 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
         goodsig3, scriptPubKey23, gFlags,
         TransactionSignatureChecker(&txTo23, 0, txFrom23.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
 
     keys.clear();
     keys.push_back(key2);
@@ -2484,7 +2496,7 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
         badsig1, scriptPubKey23, gFlags,
         TransactionSignatureChecker(&txTo23, 0, txFrom23.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::EVAL_FALSE, ScriptErrorString(err));
 
     keys.clear();
     keys.push_back(key2);
@@ -2494,7 +2506,7 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
         badsig2, scriptPubKey23, gFlags,
         TransactionSignatureChecker(&txTo23, 0, txFrom23.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::EVAL_FALSE, ScriptErrorString(err));
 
     keys.clear();
     keys.push_back(key3);
@@ -2504,7 +2516,7 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
         badsig3, scriptPubKey23, gFlags,
         TransactionSignatureChecker(&txTo23, 0, txFrom23.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::EVAL_FALSE, ScriptErrorString(err));
 
     keys.clear();
     keys.push_back(key4);
@@ -2514,7 +2526,7 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
         badsig4, scriptPubKey23, gFlags,
         TransactionSignatureChecker(&txTo23, 0, txFrom23.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::EVAL_FALSE, ScriptErrorString(err));
 
     keys.clear();
     keys.push_back(key1);
@@ -2524,7 +2536,7 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
         badsig5, scriptPubKey23, gFlags,
         TransactionSignatureChecker(&txTo23, 0, txFrom23.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
+    BOOST_CHECK_MESSAGE(err == ScriptError::EVAL_FALSE, ScriptErrorString(err));
 
     keys.clear(); // Must have signatures
     CScript badsig6 = sign_multisig(scriptPubKey23, keys, txTo23);
@@ -2532,13 +2544,26 @@ BOOST_AUTO_TEST_CASE(script_CHECKMULTISIG23) {
         badsig6, scriptPubKey23, gFlags,
         TransactionSignatureChecker(&txTo23, 0, txFrom23.vout[0].nValue),
         &err));
-    BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_INVALID_STACK_OPERATION,
+    BOOST_CHECK_MESSAGE(err == ScriptError::INVALID_STACK_OPERATION,
                         ScriptErrorString(err));
 }
 
+/* Wrapper around ProduceSignature to combine two scriptsigs */
+SignatureData CombineSignatures(const CTxOut &txout,
+                                const CMutableTransaction &tx,
+                                const SignatureData &scriptSig1,
+                                const SignatureData &scriptSig2) {
+    SignatureData data;
+    data.MergeSignatureData(scriptSig1);
+    data.MergeSignatureData(scriptSig2);
+    ProduceSignature(DUMMY_SIGNING_PROVIDER,
+                     MutableTransactionSignatureCreator(&tx, 0, txout.nValue),
+                     txout.scriptPubKey, data);
+    return data;
+}
+
 BOOST_AUTO_TEST_CASE(script_combineSigs) {
-    // Test the CombineSignatures function
-    Amount amount = Amount::zero();
+    // Test the ProduceSignature's ability to combine signatures function
     CBasicKeyStore keystore;
     std::vector<CKey> keys;
     std::vector<CPubKey> pubkeys;
@@ -2552,110 +2577,86 @@ BOOST_AUTO_TEST_CASE(script_combineSigs) {
 
     CMutableTransaction txFrom = BuildCreditingTransaction(
         GetScriptForDestination(keys[0].GetPubKey().GetID()), Amount::zero());
-    CMutableTransaction txTo = BuildSpendingTransaction(CScript(), txFrom);
+    CMutableTransaction txTo =
+        BuildSpendingTransaction(CScript(), CTransaction(txFrom));
     CScript &scriptPubKey = txFrom.vout[0].scriptPubKey;
-    CScript &scriptSig = txTo.vin[0].scriptSig;
-
-    // Although it looks like CMutableTransaction is not modified after it’s
-    // been set up (it is not passed as parameter to any non-const function),
-    // it is actually modified when new value is assigned to scriptPubKey,
-    // which points to mutableTxFrom.vout[0].scriptPubKey. Therefore we can
-    // not use single instance of CTransaction in this test.
-    // CTransaction creates a copy of CMutableTransaction and is not modified
-    // when scriptPubKey is assigned to.
+    SignatureData scriptSig;
 
     SignatureData empty;
-    SignatureData combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        empty, empty);
+    SignatureData combined =
+        CombineSignatures(txFrom.vout[0], txTo, empty, empty);
     BOOST_CHECK(combined.scriptSig.empty());
 
     // Single signature case:
     SignSignature(keystore, CTransaction(txFrom), txTo, 0,
-                  SigHashType()); // changes scriptSig
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(scriptSig), empty);
-    BOOST_CHECK(combined.scriptSig == scriptSig);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        empty, SignatureData(scriptSig));
-    BOOST_CHECK(combined.scriptSig == scriptSig);
-    CScript scriptSigCopy = scriptSig;
+                  SigHashType().withForkId());
+    scriptSig = DataFromTransaction(txTo, 0, txFrom.vout[0]);
+    combined = CombineSignatures(txFrom.vout[0], txTo, scriptSig, empty);
+    BOOST_CHECK(combined.scriptSig == scriptSig.scriptSig);
+    combined = CombineSignatures(txFrom.vout[0], txTo, empty, scriptSig);
+    BOOST_CHECK(combined.scriptSig == scriptSig.scriptSig);
+    SignatureData scriptSigCopy = scriptSig;
     // Signing again will give a different, valid signature:
-    SignSignature(keystore, CTransaction(txFrom), txTo, 0, SigHashType());
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(scriptSigCopy), SignatureData(scriptSig));
-    BOOST_CHECK(combined.scriptSig == scriptSigCopy ||
-                combined.scriptSig == scriptSig);
+    SignSignature(keystore, CTransaction(txFrom), txTo, 0,
+                  SigHashType().withForkId());
+    scriptSig = DataFromTransaction(txTo, 0, txFrom.vout[0]);
+    combined =
+        CombineSignatures(txFrom.vout[0], txTo, scriptSigCopy, scriptSig);
+    BOOST_CHECK(combined.scriptSig == scriptSigCopy.scriptSig ||
+                combined.scriptSig == scriptSig.scriptSig);
 
     // P2SH, single-signature case:
     CScript pkSingle;
     pkSingle << ToByteVector(keys[0].GetPubKey()) << OP_CHECKSIG;
     keystore.AddCScript(pkSingle);
     scriptPubKey = GetScriptForDestination(CScriptID(pkSingle));
-    SignSignature(keystore, CTransaction(txFrom), txTo, 0, SigHashType());
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(scriptSig), empty);
-    BOOST_CHECK(combined.scriptSig == scriptSig);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        empty, SignatureData(scriptSig));
-    BOOST_CHECK(combined.scriptSig == scriptSig);
+    SignSignature(keystore, CTransaction(txFrom), txTo, 0,
+                  SigHashType().withForkId());
+    scriptSig = DataFromTransaction(txTo, 0, txFrom.vout[0]);
+    combined = CombineSignatures(txFrom.vout[0], txTo, scriptSig, empty);
+    BOOST_CHECK(combined.scriptSig == scriptSig.scriptSig);
+    combined = CombineSignatures(txFrom.vout[0], txTo, empty, scriptSig);
+    BOOST_CHECK(combined.scriptSig == scriptSig.scriptSig);
     scriptSigCopy = scriptSig;
-    SignSignature(keystore, CTransaction(txFrom), txTo, 0, SigHashType());
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(scriptSigCopy), SignatureData(scriptSig));
-    BOOST_CHECK(combined.scriptSig == scriptSigCopy ||
-                combined.scriptSig == scriptSig);
-    // dummy scriptSigCopy with placeholder, should always choose
-    // non-placeholder:
-    scriptSigCopy = CScript()
-                    << OP_0
-                    << std::vector<uint8_t>(pkSingle.begin(), pkSingle.end());
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(scriptSigCopy), SignatureData(scriptSig));
-    BOOST_CHECK(combined.scriptSig == scriptSig);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(scriptSig), SignatureData(scriptSigCopy));
-    BOOST_CHECK(combined.scriptSig == scriptSig);
+    SignSignature(keystore, CTransaction(txFrom), txTo, 0,
+                  SigHashType().withForkId());
+    scriptSig = DataFromTransaction(txTo, 0, txFrom.vout[0]);
+    combined =
+        CombineSignatures(txFrom.vout[0], txTo, scriptSigCopy, scriptSig);
+    BOOST_CHECK(combined.scriptSig == scriptSigCopy.scriptSig ||
+                combined.scriptSig == scriptSig.scriptSig);
 
     // Hardest case:  Multisig 2-of-3
     scriptPubKey = GetScriptForMultisig(2, pubkeys);
     keystore.AddCScript(scriptPubKey);
-    SignSignature(keystore, CTransaction(txFrom), txTo, 0, SigHashType());
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(scriptSig), empty);
-    BOOST_CHECK(combined.scriptSig == scriptSig);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        empty, SignatureData(scriptSig));
-    BOOST_CHECK(combined.scriptSig == scriptSig);
+    SignSignature(keystore, CTransaction(txFrom), txTo, 0,
+                  SigHashType().withForkId());
+    scriptSig = DataFromTransaction(txTo, 0, txFrom.vout[0]);
+    combined = CombineSignatures(txFrom.vout[0], txTo, scriptSig, empty);
+    BOOST_CHECK(combined.scriptSig == scriptSig.scriptSig);
+    combined = CombineSignatures(txFrom.vout[0], txTo, empty, scriptSig);
+    BOOST_CHECK(combined.scriptSig == scriptSig.scriptSig);
 
     // A couple of partially-signed versions:
     std::vector<uint8_t> sig1;
     uint256 hash1 = SignatureHash(scriptPubKey, CTransaction(txTo), 0,
-                                  SigHashType(), Amount::zero());
+                                  SigHashType().withForkId(), Amount::zero());
     BOOST_CHECK(keys[0].SignECDSA(hash1, sig1));
-    sig1.push_back(SIGHASH_ALL);
+    sig1.push_back(SIGHASH_ALL | SIGHASH_FORKID);
     std::vector<uint8_t> sig2;
     uint256 hash2 = SignatureHash(
         scriptPubKey, CTransaction(txTo), 0,
-        SigHashType().withBaseType(BaseSigHashType::NONE), Amount::zero());
+        SigHashType().withBaseType(BaseSigHashType::NONE).withForkId(),
+        Amount::zero());
     BOOST_CHECK(keys[1].SignECDSA(hash2, sig2));
-    sig2.push_back(SIGHASH_NONE);
+    sig2.push_back(SIGHASH_NONE | SIGHASH_FORKID);
     std::vector<uint8_t> sig3;
     uint256 hash3 = SignatureHash(
         scriptPubKey, CTransaction(txTo), 0,
-        SigHashType().withBaseType(BaseSigHashType::SINGLE), Amount::zero());
+        SigHashType().withBaseType(BaseSigHashType::SINGLE).withForkId(),
+        Amount::zero());
     BOOST_CHECK(keys[2].SignECDSA(hash3, sig3));
-    sig3.push_back(SIGHASH_SINGLE);
+    sig3.push_back(SIGHASH_SINGLE | SIGHASH_FORKID);
 
     // Not fussy about order (or even existence) of placeholders or signatures:
     CScript partial1a = CScript() << OP_0 << sig1 << OP_0;
@@ -2668,38 +2669,39 @@ BOOST_AUTO_TEST_CASE(script_combineSigs) {
     CScript complete12 = CScript() << OP_0 << sig1 << sig2;
     CScript complete13 = CScript() << OP_0 << sig1 << sig3;
     CScript complete23 = CScript() << OP_0 << sig2 << sig3;
+    SignatureData partial1_sigs;
+    partial1_sigs.signatures.emplace(keys[0].GetPubKey().GetID(),
+                                     SigPair(keys[0].GetPubKey(), sig1));
+    SignatureData partial2_sigs;
+    partial2_sigs.signatures.emplace(keys[1].GetPubKey().GetID(),
+                                     SigPair(keys[1].GetPubKey(), sig2));
+    SignatureData partial3_sigs;
+    partial3_sigs.signatures.emplace(keys[2].GetPubKey().GetID(),
+                                     SigPair(keys[2].GetPubKey(), sig3));
 
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(partial1a), SignatureData(partial1b));
+    combined =
+        CombineSignatures(txFrom.vout[0], txTo, partial1_sigs, partial1_sigs);
     BOOST_CHECK(combined.scriptSig == partial1a);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(partial1a), SignatureData(partial2a));
+    combined =
+        CombineSignatures(txFrom.vout[0], txTo, partial1_sigs, partial2_sigs);
     BOOST_CHECK(combined.scriptSig == complete12);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(partial2a), SignatureData(partial1a));
+    combined =
+        CombineSignatures(txFrom.vout[0], txTo, partial2_sigs, partial1_sigs);
     BOOST_CHECK(combined.scriptSig == complete12);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(partial1b), SignatureData(partial2b));
+    combined =
+        CombineSignatures(txFrom.vout[0], txTo, partial1_sigs, partial2_sigs);
     BOOST_CHECK(combined.scriptSig == complete12);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(partial3b), SignatureData(partial1b));
+    combined =
+        CombineSignatures(txFrom.vout[0], txTo, partial3_sigs, partial1_sigs);
     BOOST_CHECK(combined.scriptSig == complete13);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(partial2a), SignatureData(partial3a));
+    combined =
+        CombineSignatures(txFrom.vout[0], txTo, partial2_sigs, partial3_sigs);
     BOOST_CHECK(combined.scriptSig == complete23);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(partial3b), SignatureData(partial2b));
+    combined =
+        CombineSignatures(txFrom.vout[0], txTo, partial3_sigs, partial2_sigs);
     BOOST_CHECK(combined.scriptSig == complete23);
-    combined = CombineSignatures(
-        scriptPubKey, MutableTransactionSignatureChecker(&txTo, 0, amount),
-        SignatureData(partial3b), SignatureData(partial3a));
+    combined =
+        CombineSignatures(txFrom.vout[0], txTo, partial3_sigs, partial3_sigs);
     BOOST_CHECK(combined.scriptSig == partial3c);
 }
 
@@ -2714,7 +2716,7 @@ BOOST_AUTO_TEST_CASE(script_standard_push) {
                                          SCRIPT_VERIFY_MINIMALDATA,
                                          BaseSignatureChecker(), &err),
                             "Number " << i << " push is not minimal data.");
-        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+        BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
     }
 
     for (unsigned int i = 0; i <= MAX_SCRIPT_ELEMENT_SIZE; i++) {
@@ -2727,7 +2729,7 @@ BOOST_AUTO_TEST_CASE(script_standard_push) {
                                          SCRIPT_VERIFY_MINIMALDATA,
                                          BaseSignatureChecker(), &err),
                             "Length " << i << " push is not minimal data.");
-        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+        BOOST_CHECK_MESSAGE(err == ScriptError::OK, ScriptErrorString(err));
     }
 }
 
@@ -2879,45 +2881,45 @@ BOOST_AUTO_TEST_CASE(script_FindAndDelete) {
     // delete nothing should be a no-op
     d = CScript();
     expect = s;
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 0);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 0);
     BOOST_CHECK(s == expect);
 
     s = CScript() << OP_1 << OP_2 << OP_3;
     d = CScript() << OP_2;
     expect = CScript() << OP_1 << OP_3;
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 1);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 1);
     BOOST_CHECK(s == expect);
 
     s = CScript() << OP_3 << OP_1 << OP_3 << OP_3 << OP_4 << OP_3;
     d = CScript() << OP_3;
     expect = CScript() << OP_1 << OP_4;
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 4);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 4);
     BOOST_CHECK(s == expect);
 
     // PUSH 0x02ff03 onto stack
     s = ScriptFromHex("0302ff03");
     d = ScriptFromHex("0302ff03");
     expect = CScript();
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 1);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 1);
     BOOST_CHECK(s == expect);
 
     // PUSH 0x2ff03 PUSH 0x2ff03
     s = ScriptFromHex("0302ff030302ff03");
     d = ScriptFromHex("0302ff03");
     expect = CScript();
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 2);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 2);
     BOOST_CHECK(s == expect);
 
     s = ScriptFromHex("0302ff030302ff03");
     d = ScriptFromHex("02");
     expect = s; // FindAndDelete matches entire opcodes
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 0);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 0);
     BOOST_CHECK(s == expect);
 
     s = ScriptFromHex("0302ff030302ff03");
     d = ScriptFromHex("ff");
     expect = s;
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 0);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 0);
     BOOST_CHECK(s == expect);
 
     // This is an odd edge case: strip of the push-three-bytes prefix, leaving
@@ -2925,7 +2927,7 @@ BOOST_AUTO_TEST_CASE(script_FindAndDelete) {
     s = ScriptFromHex("0302ff030302ff03");
     d = ScriptFromHex("03");
     expect = CScript() << ParseHex("ff03") << ParseHex("ff03");
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 2);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 2);
     BOOST_CHECK(s == expect);
 
     // Byte sequence that spans multiple opcodes:
@@ -2934,40 +2936,40 @@ BOOST_AUTO_TEST_CASE(script_FindAndDelete) {
     d = ScriptFromHex("feed51");
     expect = s;
     // doesn't match 'inside' opcodes
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 0);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 0);
     BOOST_CHECK(s == expect);
 
     // PUSH(0xfeed) OP_1 OP_VERIFY
     s = ScriptFromHex("02feed5169");
     d = ScriptFromHex("02feed51");
     expect = ScriptFromHex("69");
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 1);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 1);
     BOOST_CHECK(s == expect);
 
     s = ScriptFromHex("516902feed5169");
     d = ScriptFromHex("feed51");
     expect = s;
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 0);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 0);
     BOOST_CHECK(s == expect);
 
     s = ScriptFromHex("516902feed5169");
     d = ScriptFromHex("02feed51");
     expect = ScriptFromHex("516969");
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 1);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 1);
     BOOST_CHECK(s == expect);
 
     s = CScript() << OP_0 << OP_0 << OP_1 << OP_1;
     d = CScript() << OP_0 << OP_1;
     // FindAndDelete is single-pass
     expect = CScript() << OP_0 << OP_1;
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 1);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 1);
     BOOST_CHECK(s == expect);
 
     s = CScript() << OP_0 << OP_0 << OP_1 << OP_0 << OP_1 << OP_1;
     d = CScript() << OP_0 << OP_1;
     // FindAndDelete is single-pass
     expect = CScript() << OP_0 << OP_1;
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 2);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 2);
     BOOST_CHECK(s == expect);
 
     // Another weird edge case:
@@ -2976,13 +2978,13 @@ BOOST_AUTO_TEST_CASE(script_FindAndDelete) {
     // ... can remove the invalid push
     d = ScriptFromHex("03feed");
     expect = ScriptFromHex("00");
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 1);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 1);
     BOOST_CHECK(s == expect);
 
     s = ScriptFromHex("0003feed");
     d = ScriptFromHex("00");
     expect = ScriptFromHex("03feed");
-    BOOST_CHECK_EQUAL(s.FindAndDelete(d), 1);
+    BOOST_CHECK_EQUAL(FindAndDelete(s, d), 1);
     BOOST_CHECK(s == expect);
 }
 
@@ -3022,6 +3024,53 @@ BOOST_AUTO_TEST_CASE(IsWitnessProgram) {
             !script.IsWitnessProgram(),
             "Failed IsWitnessProgram check with 3 stack elements");
     }
+}
+
+BOOST_AUTO_TEST_CASE(script_HasValidOps) {
+    // Exercise the HasValidOps functionality
+    CScript script;
+    // Normal script
+    script =
+        ScriptFromHex("76a9141234567890abcdefa1a2a3a4a5a6a7a8a9a0aaab88ac");
+    BOOST_CHECK(script.HasValidOps());
+    script =
+        ScriptFromHex("76a914ff34567890abcdefa1a2a3a4a5a6a7a8a9a0aaab88ac");
+    BOOST_CHECK(script.HasValidOps());
+    // Script with OP_INVALIDOPCODE explicit
+    script = ScriptFromHex("ff88ac");
+    BOOST_CHECK(!script.HasValidOps());
+    // Script with undefined opcode
+    script = ScriptFromHex("88acc0");
+    BOOST_CHECK(!script.HasValidOps());
+
+    // Check all non push opcodes.
+    for (uint8_t opcode = OP_1NEGATE; opcode < FIRST_UNDEFINED_OP_VALUE;
+         opcode++) {
+        script = CScript() << opcode;
+        BOOST_CHECK(script.HasValidOps());
+    }
+
+    script = CScript() << FIRST_UNDEFINED_OP_VALUE;
+    BOOST_CHECK(!script.HasValidOps());
+}
+
+BOOST_AUTO_TEST_CASE(script_can_append_self) {
+    CScript s, d;
+
+    s = ScriptFromHex("00");
+    s += s;
+    d = ScriptFromHex("0000");
+    BOOST_CHECK(s == d);
+
+    // check doubling a script that's large enough to require reallocation
+    static const char hex[] =
+        "04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6"
+        "bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f";
+    s = CScript() << ParseHex(hex) << OP_CHECKSIG;
+    d = CScript() << ParseHex(hex) << OP_CHECKSIG << ParseHex(hex)
+                  << OP_CHECKSIG;
+    s += s;
+    BOOST_CHECK(s == d);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

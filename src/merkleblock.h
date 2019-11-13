@@ -24,7 +24,7 @@
  * storing a bit for each traversed node, signifying whether the node is the
  * parent of at least one matched leaf txid (or a matched txid itself). In
  * case we are at the leaf level, or this bit is 0, its merkle node hash is
- * stored, and its children are not explorer further. Otherwise, no hash is
+ * stored, and its children are not explored further. Otherwise, no hash is
  * stored, but we recurse into both (or the only) child branch. During
  * decoding, the same depth-first traversal is performed, consuming bits and
  * hashes as they written during encoding.
@@ -52,7 +52,7 @@
 class CPartialMerkleTree {
 protected:
     /** the total number of transactions in the block */
-    unsigned int nTransactions;
+    uint32_t nTransactions;
 
     /** node-is-parent-of-matched-txid bits */
     std::vector<bool> vBits;
@@ -67,7 +67,7 @@ protected:
      * Helper function to efficiently calculate the number of nodes at given
      * height in the merkle tree.
      */
-    unsigned int CalcTreeWidth(int height) const {
+    size_t CalcTreeWidth(int height) const {
         return (nTransactions + (1 << height) - 1) >> height;
     }
 
@@ -75,14 +75,13 @@ protected:
      * Calculate the hash of a node in the merkle tree (at leaf level: the
      * txid's themselves)
      */
-    uint256 CalcHash(int height, unsigned int pos,
-                     const std::vector<uint256> &vTxid);
+    uint256 CalcHash(int height, size_t pos, const std::vector<uint256> &vTxid);
 
     /**
      * Recursive function that traverses tree nodes, storing the data as bits
      * and hashes.
      */
-    void TraverseAndBuild(int height, unsigned int pos,
+    void TraverseAndBuild(int height, size_t pos,
                           const std::vector<uint256> &vTxid,
                           const std::vector<bool> &vMatch);
 
@@ -91,10 +90,9 @@ protected:
      * hashes produced by TraverseAndBuild. It returns the hash of the
      * respective node and its respective index.
      */
-    uint256 TraverseAndExtract(int height, unsigned int pos,
-                               unsigned int &nBitsUsed, unsigned int &nHashUsed,
-                               std::vector<uint256> &vMatch,
-                               std::vector<unsigned int> &vnIndex);
+    uint256 TraverseAndExtract(int height, size_t pos, size_t &nBitsUsed,
+                               size_t &nHashUsed, std::vector<uint256> &vMatch,
+                               std::vector<size_t> &vnIndex);
 
 public:
     /** serialization implementation */
@@ -109,13 +107,13 @@ public:
             READWRITE(vBytes);
             CPartialMerkleTree &us = *(const_cast<CPartialMerkleTree *>(this));
             us.vBits.resize(vBytes.size() * 8);
-            for (unsigned int p = 0; p < us.vBits.size(); p++) {
+            for (size_t p = 0; p < us.vBits.size(); p++) {
                 us.vBits[p] = (vBytes[p / 8] & (1 << (p % 8))) != 0;
             }
             us.fBad = false;
         } else {
             vBytes.resize((vBits.size() + 7) / 8);
-            for (unsigned int p = 0; p < vBits.size(); p++) {
+            for (size_t p = 0; p < vBits.size(); p++) {
                 vBytes[p / 8] |= vBits[p] << (p % 8);
             }
             READWRITE(vBytes);
@@ -137,7 +135,13 @@ public:
      * root, or 0 in case of failure.
      */
     uint256 ExtractMatches(std::vector<uint256> &vMatch,
-                           std::vector<unsigned int> &vnIndex);
+                           std::vector<size_t> &vnIndex);
+
+    /**
+     * Get number of transactions the merkle proof is indicating for
+     * cross-reference with local blockchain knowledge.
+     */
+    uint32_t GetNumTransactions() const { return nTransactions; };
 };
 
 /**
@@ -148,6 +152,9 @@ public:
  * From the peer-node's perspective, the SPV client is a "filtered node".
  * See BIP37 for details:
  * https://github.com/bitcoin/bips/blob/master/bip-0037.mediawiki
+ *
+ * NOTE: The class assumes that the given CBlock has *at least* 1 transaction.
+ * If the CBlock has 0 txs, it will hit an assertion.
  */
 class CMerkleBlock {
 public:
@@ -156,7 +163,7 @@ public:
     CPartialMerkleTree txn;
 
     /** Public only for unit testing and relay testing (not relayed) */
-    std::vector<std::pair<unsigned int, uint256>> vMatchedTxn;
+    std::vector<std::pair<size_t, uint256>> vMatchedTxn;
 
     /**
      * Create a Merkle proof according to a bloom filter. Note

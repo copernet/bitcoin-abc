@@ -9,6 +9,8 @@
 # You should be able to call this script from pretty much anywhere.
 # It takes care of setting up the PYTHONPATH so tests can run.
 
+export LC_ALL=C
+
 # Enable exit on any error.
 set -e
 
@@ -40,9 +42,9 @@ echo "Running test framework self-tests..."
 # Run all the Python tests we find there.
 for t in *.py
 do
-    echo "`date -u`: Starting self-test: $t"
+    echo "$(date -u): Starting self-test: $t"
     SRCDIR=$RPC_TESTS_DIR/../.. python3 ./$t
-    echo "`date -u`: Finished self-test: $t"
+    echo "$(date -u): Finished self-test: $t"
     echo
 done
 

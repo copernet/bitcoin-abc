@@ -4,6 +4,9 @@
 
 #include <blockfilter.h>
 #include <crypto/siphash.h>
+#include <hash.h>
+#include <primitives/transaction.h>
+#include <script/script.h>
 #include <streams.h>
 
 /// SerType used to serialize parameters in GCS filter encoding.
@@ -77,7 +80,7 @@ static uint64_t MapIntoRange(uint64_t x, uint64_t n) {
 }
 
 uint64_t GCSFilter::HashToRange(const Element &element) const {
-    uint64_t hash = CSipHasher(m_siphash_k0, m_siphash_k1)
+    uint64_t hash = CSipHasher(m_params.m_siphash_k0, m_params.m_siphash_k1)
                         .Write(element.data(), element.size())
                         .Finalize();
     return MapIntoRange(hash, m_F);
@@ -94,16 +97,11 @@ GCSFilter::BuildHashedSet(const ElementSet &elements) const {
     return hashed_elements;
 }
 
-GCSFilter::GCSFilter(uint64_t siphash_k0, uint64_t siphash_k1, uint8_t P,
-                     uint32_t M)
-    : m_siphash_k0(siphash_k0), m_siphash_k1(siphash_k1), m_P(P), m_M(M),
-      m_N(0), m_F(0) {}
+GCSFilter::GCSFilter(const Params &params)
+    : m_params(params), m_N(0), m_F(0), m_encoded{0} {}
 
-GCSFilter::GCSFilter(uint64_t siphash_k0, uint64_t siphash_k1, uint8_t P,
-                     uint32_t M, std::vector<uint8_t> encoded_filter)
-    : GCSFilter(siphash_k0, siphash_k1, P, M) {
-    m_encoded = std::move(encoded_filter);
-
+GCSFilter::GCSFilter(const Params &params, std::vector<uint8_t> encoded_filter)
+    : m_params(params), m_encoded(std::move(encoded_filter)) {
     VectorReader stream(GCS_SER_TYPE, GCS_SER_VERSION, m_encoded, 0);
 
     uint64_t N = ReadCompactSize(stream);
@@ -111,29 +109,28 @@ GCSFilter::GCSFilter(uint64_t siphash_k0, uint64_t siphash_k1, uint8_t P,
     if (m_N != N) {
         throw std::ios_base::failure("N must be <2^32");
     }
-    m_F = static_cast<uint64_t>(m_N) * static_cast<uint64_t>(m_M);
+    m_F = static_cast<uint64_t>(m_N) * static_cast<uint64_t>(m_params.m_M);
 
     // Verify that the encoded filter contains exactly N elements. If it has too
     // much or too little data, a std::ios_base::failure exception will be
     // raised.
     BitStreamReader<VectorReader> bitreader(stream);
     for (uint64_t i = 0; i < m_N; ++i) {
-        GolombRiceDecode(bitreader, m_P);
+        GolombRiceDecode(bitreader, m_params.m_P);
     }
     if (!stream.empty()) {
         throw std::ios_base::failure("encoded_filter contains excess data");
     }
 }
 
-GCSFilter::GCSFilter(uint64_t siphash_k0, uint64_t siphash_k1, uint8_t P,
-                     uint32_t M, const ElementSet &elements)
-    : GCSFilter(siphash_k0, siphash_k1, P, M) {
+GCSFilter::GCSFilter(const Params &params, const ElementSet &elements)
+    : m_params(params) {
     size_t N = elements.size();
     m_N = static_cast<uint32_t>(N);
     if (m_N != N) {
         throw std::invalid_argument("N must be <2^32");
     }
-    m_F = static_cast<uint64_t>(m_N) * static_cast<uint64_t>(m_M);
+    m_F = static_cast<uint64_t>(m_N) * static_cast<uint64_t>(m_params.m_M);
 
     CVectorWriter stream(GCS_SER_TYPE, GCS_SER_VERSION, m_encoded, 0);
 
@@ -148,7 +145,7 @@ GCSFilter::GCSFilter(uint64_t siphash_k0, uint64_t siphash_k1, uint8_t P,
     uint64_t last_value = 0;
     for (uint64_t value : BuildHashedSet(elements)) {
         uint64_t delta = value - last_value;
-        GolombRiceEncode(bitwriter, m_P, delta);
+        GolombRiceEncode(bitwriter, m_params.m_P, delta);
         last_value = value;
     }
 
@@ -168,7 +165,7 @@ bool GCSFilter::MatchInternal(const uint64_t *element_hashes,
     uint64_t value = 0;
     size_t hashes_index = 0;
     for (uint32_t i = 0; i < m_N; ++i) {
-        uint64_t delta = GolombRiceDecode(bitreader, m_P);
+        uint64_t delta = GolombRiceDecode(bitreader, m_params.m_P);
         value += delta;
 
         while (true) {
@@ -195,4 +192,85 @@ bool GCSFilter::Match(const Element &element) const {
 bool GCSFilter::MatchAny(const ElementSet &elements) const {
     const std::vector<uint64_t> queries = BuildHashedSet(elements);
     return MatchInternal(queries.data(), queries.size());
+}
+
+static GCSFilter::ElementSet BasicFilterElements(const CBlock &block,
+                                                 const CBlockUndo &block_undo) {
+    GCSFilter::ElementSet elements;
+
+    for (const CTransactionRef &tx : block.vtx) {
+        for (const CTxOut &txout : tx->vout) {
+            const CScript &script = txout.scriptPubKey;
+            if (script.empty() || script[0] == OP_RETURN) {
+                continue;
+            }
+            elements.emplace(script.begin(), script.end());
+        }
+    }
+
+    for (const CTxUndo &tx_undo : block_undo.vtxundo) {
+        for (const Coin &prevout : tx_undo.vprevout) {
+            const CScript &script = prevout.GetTxOut().scriptPubKey;
+            if (script.empty()) {
+                continue;
+            }
+            elements.emplace(script.begin(), script.end());
+        }
+    }
+
+    return elements;
+}
+
+BlockFilter::BlockFilter(BlockFilterType filter_type, const uint256 &block_hash,
+                         std::vector<uint8_t> filter)
+    : m_filter_type(filter_type), m_block_hash(block_hash) {
+    GCSFilter::Params params;
+    if (!BuildParams(params)) {
+        throw std::invalid_argument("unknown filter_type");
+    }
+    m_filter = GCSFilter(params, std::move(filter));
+}
+
+BlockFilter::BlockFilter(BlockFilterType filter_type, const CBlock &block,
+                         const CBlockUndo &block_undo)
+    : m_filter_type(filter_type), m_block_hash(block.GetHash()) {
+    GCSFilter::Params params;
+    if (!BuildParams(params)) {
+        throw std::invalid_argument("unknown filter_type");
+    }
+    m_filter = GCSFilter(params, BasicFilterElements(block, block_undo));
+}
+
+bool BlockFilter::BuildParams(GCSFilter::Params &params) const {
+    switch (m_filter_type) {
+        case BlockFilterType::BASIC:
+            params.m_siphash_k0 = m_block_hash.GetUint64(0);
+            params.m_siphash_k1 = m_block_hash.GetUint64(1);
+            params.m_P = BASIC_FILTER_P;
+            params.m_M = BASIC_FILTER_M;
+            return true;
+        case BlockFilterType::INVALID:
+            return false;
+    }
+
+    return false;
+}
+
+uint256 BlockFilter::GetHash() const {
+    const std::vector<uint8_t> &data = GetEncodedFilter();
+
+    uint256 result;
+    CHash256().Write(data.data(), data.size()).Finalize(result.begin());
+    return result;
+}
+
+uint256 BlockFilter::ComputeHeader(const uint256 &prev_header) const {
+    const uint256 &filter_hash = GetHash();
+
+    uint256 result;
+    CHash256()
+        .Write(filter_hash.begin(), filter_hash.size())
+        .Write(prev_header.begin(), prev_header.size())
+        .Finalize(result.begin());
+    return result;
 }

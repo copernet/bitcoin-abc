@@ -10,8 +10,8 @@
 #include <blockstatus.h>
 #include <blockvalidity.h>
 #include <consensus/params.h>
-#include <diskblockpos.h>
-#include <pow.h>
+#include <crypto/common.h> // for ReadLE64
+#include <flatfile.h>
 #include <primitives/block.h>
 #include <sync.h>
 #include <tinyformat.h>
@@ -24,7 +24,7 @@
  * Maximum amount of time that a block timestamp is allowed to exceed the
  * current network-adjusted time before the block will be accepted.
  */
-static const int64_t MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60;
+static constexpr int64_t MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60;
 
 /**
  * Timestamp window used as a grace period by code that compares external
@@ -32,7 +32,15 @@ static const int64_t MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60;
  * to block timestamps. This should be set at least as high as
  * MAX_FUTURE_BLOCK_TIME.
  */
-static const int64_t TIMESTAMP_WINDOW = MAX_FUTURE_BLOCK_TIME;
+static constexpr int64_t TIMESTAMP_WINDOW = MAX_FUTURE_BLOCK_TIME;
+
+/**
+ * Maximum gap between node time and block time used
+ * for the "Catching up..." mode in GUI.
+ *
+ * Ref: https://github.com/bitcoin/bitcoin/pull/1026
+ */
+static constexpr int64_t MAX_BLOCK_TIME_GAP = 90 * 60;
 
 /**
  * The block chain is a tree shaped structure starting with the genesis block at
@@ -97,7 +105,7 @@ public:
     //! (memory only) block header metadata
     uint64_t nTimeReceived;
 
-    //! (memory only) Maximum nTime in the chain upto and including this block.
+    //! (memory only) Maximum nTime in the chain up to and including this block.
     unsigned int nTimeMax;
 
     void SetNull() {
@@ -136,8 +144,8 @@ public:
         nNonce = block.nNonce;
     }
 
-    CDiskBlockPos GetBlockPos() const {
-        CDiskBlockPos ret;
+    FlatFilePos GetBlockPos() const {
+        FlatFilePos ret;
         if (nStatus.hasData()) {
             ret.nFile = nFile;
             ret.nPos = nDataPos;
@@ -145,8 +153,8 @@ public:
         return ret;
     }
 
-    CDiskBlockPos GetUndoPos() const {
-        CDiskBlockPos ret;
+    FlatFilePos GetUndoPos() const {
+        FlatFilePos ret;
         if (nStatus.hasUndo()) {
             ret.nFile = nFile;
             ret.nPos = nUndoPos;
@@ -236,7 +244,12 @@ public:
  * Maintain a map of CBlockIndex for all known headers.
  */
 struct BlockHasher {
-    size_t operator()(const uint256 &hash) const { return hash.GetCheapHash(); }
+    // this used to call `GetCheapHash()` in uint256, which was later moved; the
+    // cheap hash function simply calls ReadLE64() however, so the end result is
+    // identical
+    size_t operator()(const uint256 &hash) const {
+        return ReadLE64(hash.begin());
+    }
 };
 
 typedef std::unordered_map<uint256, CBlockIndex *, BlockHasher> BlockMap;
@@ -288,14 +301,14 @@ public:
     inline void SerializationOp(Stream &s, Operation ser_action) {
         int _nVersion = s.GetVersion();
         if (!(s.GetType() & SER_GETHASH)) {
-            READWRITE(VARINT(_nVersion));
+            READWRITE(VARINT(_nVersion, VarIntMode::NONNEGATIVE_SIGNED));
         }
 
-        READWRITE(VARINT(nHeight));
+        READWRITE(VARINT(nHeight, VarIntMode::NONNEGATIVE_SIGNED));
         READWRITE(nStatus);
         READWRITE(VARINT(nTx));
         if (nStatus.hasData() || nStatus.hasUndo()) {
-            READWRITE(VARINT(nFile));
+            READWRITE(VARINT(nFile, VarIntMode::NONNEGATIVE_SIGNED));
         }
         if (nStatus.hasData()) {
             READWRITE(VARINT(nDataPos));

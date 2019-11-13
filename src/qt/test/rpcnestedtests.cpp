@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <test/rpcnestedtests.h>
+#include <qt/test/rpcnestedtests.h>
 
 #include <chainparams.h>
 #include <config.h>
@@ -12,13 +12,15 @@
 #include <qt/rpcconsole.h>
 #include <rpc/register.h>
 #include <rpc/server.h>
-#include <test/test_bitcoin.h>
-#include <univalue.h>
-#include <util.h>
+#include <util/system.h>
 #include <validation.h>
+
+#include <test/test_bitcoin.h>
 
 #include <QDir>
 #include <QtGlobal>
+
+#include <univalue.h>
 
 static UniValue rpcNestedTest_rpc(const Config &config,
                                   const JSONRPCRequest &request) {
@@ -36,14 +38,6 @@ void RPCNestedTests::rpcNestedTests() {
     // do some test setup
     // could be moved to a more generic place when we add more tests on QT level
     tableRPC.appendCommand("rpcNestedTest", &vRPCCommands[0]);
-    ClearDatadirCache();
-    std::string path =
-        QDir::tempPath().toStdString() + "/" +
-        strprintf("test_bitcoin_qt_%lu_%i", (unsigned long)GetTime(),
-                  (int)(GetRand(100000)));
-    QDir dir(QString::fromStdString(path));
-    dir.mkpath(".");
-    gArgs.ForceSetArg("-datadir", path);
     // mempool.setSanityCheck(1.0);
 
     TestingSetup test;
@@ -81,7 +75,7 @@ void RPCNestedTests::rpcNestedTests() {
     RPCConsole::RPCExecuteCommandLine(*node, result, "getblockchaininfo ");
     QVERIFY(result.substr(0, 1) == "{");
 
-    // Quote path identifier are allowed, but look after a child contaning the
+    // Quote path identifier are allowed, but look after a child containing the
     // quotes in the key.
     (RPCConsole::RPCExecuteCommandLine(*node, result,
                                        "getblockchaininfo()[\"chain\"]"));
@@ -94,7 +88,7 @@ void RPCNestedTests::rpcNestedTests() {
     (RPCConsole::RPCExecuteCommandLine(*node, result2,
                                        "createrawtransaction([],{},0)"));
     QVERIFY(result == result2);
-    // Whitespace between parametres is allowed.
+    // Whitespace between parameters is allowed.
     (RPCConsole::RPCExecuteCommandLine(
         *node, result2, "createrawtransaction( [],  {} , 0   )"));
     QVERIFY(result == result2);
@@ -205,6 +199,4 @@ void RPCNestedTests::rpcNestedTests() {
                                  *node, result, "rpcNestedTest(abc,,)"),
                              std::runtime_error);
 #endif
-
-    fs::remove_all(fs::path(path));
 }

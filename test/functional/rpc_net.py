@@ -7,7 +7,7 @@
 Tests correspond to code in rpc/net.cpp.
 """
 
-import time
+from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
@@ -15,6 +15,7 @@ from test_framework.util import (
     assert_raises_rpc_error,
     connect_nodes_bi,
     p2p_port,
+    wait_until,
 )
 
 
@@ -22,6 +23,8 @@ class NetTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
+        self.extra_args = [["-minrelaytxfee=0.00001000"],
+                           ["-minrelaytxfee=0.00000500"]]
 
     def run_test(self):
         self._test_connection_count()
@@ -48,18 +51,17 @@ class NetTest(BitcoinTestFramework):
         # the bytes sent/received should change
         # note ping and pong are 32 bytes each
         self.nodes[0].ping()
-        time.sleep(0.1)
+        wait_until(lambda: (net_totals['totalbytessent'] + 32 * 2) ==
+                   self.nodes[0].getnettotals()['totalbytessent'], timeout=1)
+        wait_until(lambda: (net_totals['totalbytesrecv'] + 32 * 2) ==
+                   self.nodes[0].getnettotals()['totalbytesrecv'], timeout=1)
+
         peer_info_after_ping = self.nodes[0].getpeerinfo()
-        net_totals_after_ping = self.nodes[0].getnettotals()
         for before, after in zip(peer_info, peer_info_after_ping):
             assert_equal(before['bytesrecv_per_msg']['pong'] +
                          32, after['bytesrecv_per_msg']['pong'])
             assert_equal(before['bytessent_per_msg']['ping'] +
                          32, after['bytessent_per_msg']['ping'])
-        assert_equal(net_totals['totalbytesrecv'] + 32 * 2,
-                     net_totals_after_ping['totalbytesrecv'])
-        assert_equal(net_totals['totalbytessent'] + 32 * 2,
-                     net_totals_after_ping['totalbytessent'])
 
     def _test_getnetworkinginfo(self):
         assert_equal(self.nodes[0].getnetworkinfo()['networkactive'], True)
@@ -67,12 +69,9 @@ class NetTest(BitcoinTestFramework):
 
         self.nodes[0].setnetworkactive(False)
         assert_equal(self.nodes[0].getnetworkinfo()['networkactive'], False)
-        timeout = 3
-        while self.nodes[0].getnetworkinfo()['connections'] != 0:
-            # Wait a bit for all sockets to close
-            assert timeout > 0, 'not all connections closed in time'
-            timeout -= 0.1
-            time.sleep(0.1)
+        # Wait a bit for all sockets to close
+        wait_until(lambda: self.nodes[0].getnetworkinfo()[
+                   'connections'] == 0, timeout=3)
 
         self.nodes[0].setnetworkactive(True)
         connect_nodes_bi(self.nodes[0], self.nodes[1])
@@ -88,7 +87,7 @@ class NetTest(BitcoinTestFramework):
         added_nodes = self.nodes[0].getaddednodeinfo(ip_port)
         assert_equal(len(added_nodes), 1)
         assert_equal(added_nodes[0]['addednode'], ip_port)
-        # check that a non-existant node returns an error
+        # check that a non-existent node returns an error
         assert_raises_rpc_error(-24, "Node has not been added",
                                 self.nodes[0].getaddednodeinfo, '1.1.1.1')
 
@@ -98,6 +97,8 @@ class NetTest(BitcoinTestFramework):
         # the address bound to on one side will be the source address for the other node
         assert_equal(peer_info[0][0]['addrbind'], peer_info[1][0]['addr'])
         assert_equal(peer_info[1][0]['addrbind'], peer_info[0][0]['addr'])
+        assert_equal(peer_info[0][0]['minfeefilter'], Decimal("0.00000500"))
+        assert_equal(peer_info[1][0]['minfeefilter'], Decimal("0.00001000"))
 
 
 if __name__ == '__main__':

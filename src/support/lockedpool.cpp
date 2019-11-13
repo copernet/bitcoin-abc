@@ -118,7 +118,7 @@ Arena::Stats Arena::stats() const {
 }
 
 #ifdef ARENA_DEBUG
-void printchunk(char *base, size_t sz, bool used) {
+static void printchunk(char *base, size_t sz, bool used) {
     std::cout << "0x" << std::hex << std::setw(16) << std::setfill('0') << base
               << " 0x" << std::hex << std::setw(16) << std::setfill('0') << sz
               << " 0x" << used << std::endl;
@@ -178,7 +178,7 @@ void Win32LockedPageAllocator::FreeLocked(void *addr, size_t len) {
 }
 
 size_t Win32LockedPageAllocator::GetLimit() {
-    // TODO is there a limit on windows, how to get it?
+    // TODO is there a limit on Windows, how to get it?
     return std::numeric_limits<size_t>::max();
 }
 #endif

@@ -17,7 +17,6 @@ from test_framework.blocktools import (
     create_transaction,
     make_conform_to_ctor,
 )
-from test_framework.comptool import RejectResult, TestInstance, TestManager
 from test_framework.key import CECKey
 from test_framework.messages import (
     COIN,
@@ -27,7 +26,7 @@ from test_framework.messages import (
     CTxOut,
     ToHex,
 )
-from test_framework.mininode import network_thread_start
+from test_framework.mininode import P2PDataStore
 from test_framework.script import (
     CScript,
     OP_CHECKSIG,
@@ -36,16 +35,14 @@ from test_framework.script import (
     SIGHASH_FORKID,
     SignatureHashForkId,
 )
-from test_framework.test_framework import ComparisonTestFramework
+from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
 # far into the future
 REPLAY_PROTECTION_START_TIME = 2000000000
 
 # Error due to invalid signature
-INVALID_SIGNATURE_ERROR = b'mandatory-script-verify-flag-failed (Signature must be zero for failed CHECK(MULTI)SIG operation)'
-RPC_INVALID_SIGNATURE_ERROR = "16: " + \
-    INVALID_SIGNATURE_ERROR.decode("utf-8")
+RPC_INVALID_SIGNATURE_ERROR = "mandatory-script-verify-flag-failed (Signature must be zero for failed CHECK(MULTI)SIG operation) (code 16)"
 
 
 class PreviousSpendableOutput(object):
@@ -55,7 +52,7 @@ class PreviousSpendableOutput(object):
         self.n = n
 
 
-class ReplayProtectionTest(ComparisonTestFramework):
+class ReplayProtectionTest(BitcoinTestFramework):
 
     def set_test_params(self):
         self.num_nodes = 1
@@ -65,13 +62,6 @@ class ReplayProtectionTest(ComparisonTestFramework):
         self.blocks = {}
         self.extra_args = [['-whitelist=127.0.0.1',
                             "-replayprotectionactivationtime={}".format(REPLAY_PROTECTION_START_TIME)]]
-
-    def run_test(self):
-        self.test = TestManager(self, self.options.tmpdir)
-        self.test.add_all_connections(self.nodes)
-        network_thread_start()
-        self.nodes[0].setmocktime(REPLAY_PROTECTION_START_TIME)
-        self.test.run()
 
     def next_block(self, number):
         if self.tip == None:
@@ -94,8 +84,12 @@ class ReplayProtectionTest(ComparisonTestFramework):
         self.blocks[number] = block
         return block
 
-    def get_tests(self):
-        self.genesis_hash = int(self.nodes[0].getbestblockhash(), 16)
+    def run_test(self):
+        node = self.nodes[0]
+        node.add_p2p_connection(P2PDataStore())
+        node.setmocktime(REPLAY_PROTECTION_START_TIME)
+
+        self.genesis_hash = int(node.getbestblockhash(), 16)
         self.block_heights[self.genesis_hash] = 0
         spendable_outputs = []
 
@@ -106,17 +100,6 @@ class ReplayProtectionTest(ComparisonTestFramework):
         # get an output that we previously marked as spendable
         def get_spendable_output():
             return PreviousSpendableOutput(spendable_outputs.pop(0).vtx[0], 0)
-
-        # returns a test case that asserts that the current tip was accepted
-        def accepted():
-            return TestInstance([[self.tip, True]])
-
-        # returns a test case that asserts that the current tip was rejected
-        def rejected(reject=None):
-            if reject is None:
-                return TestInstance([[self.tip, False]])
-            else:
-                return TestInstance([[self.tip, reject]])
 
         # move the tip back to a previous block
         def tip(number):
@@ -141,20 +124,19 @@ class ReplayProtectionTest(ComparisonTestFramework):
 
         # shorthand
         block = self.next_block
-        node = self.nodes[0]
 
         # Create a new block
         block(0)
         save_spendable_output()
-        yield accepted()
+        node.p2p.send_blocks_and_test([self.tip], node)
 
         # Now we need that block to mature so we can spend the coinbase.
-        test = TestInstance(sync_every_block=False)
+        maturity_blocks = []
         for i in range(99):
             block(5000 + i)
-            test.blocks_and_transactions.append([self.tip, True])
+            maturity_blocks.append(self.tip)
             save_spendable_output()
-        yield test
+        node.p2p.send_blocks_and_test(maturity_blocks, node)
 
         # collect spendable outputs now to avoid cluttering the code later on
         out = []
@@ -192,7 +174,7 @@ class ReplayProtectionTest(ComparisonTestFramework):
 
         def send_transaction_to_mempool(tx):
             tx_id = node.sendrawtransaction(ToHex(tx))
-            assert(tx_id in set(node.getrawmempool()))
+            assert tx_id in set(node.getrawmempool())
             return tx_id
 
         # Before the fork, no replay protection required to get in the mempool.
@@ -203,7 +185,7 @@ class ReplayProtectionTest(ComparisonTestFramework):
         # And txns get mined in a block properly.
         block(1)
         update_block(1, txns)
-        yield accepted()
+        node.p2p.send_blocks_and_test([self.tip], node)
 
         # Replay protected transactions are rejected.
         replay_txns = create_fund_and_spend_tx(out[1], 0xffdead)
@@ -214,7 +196,8 @@ class ReplayProtectionTest(ComparisonTestFramework):
         # And block containing them are rejected as well.
         block(2)
         update_block(2, replay_txns)
-        yield rejected(RejectResult(16, b'blk-bad-inputs'))
+        node.p2p.send_blocks_and_test(
+            [self.tip], node, success=False, reject_reason='blk-bad-inputs')
 
         # Rewind bad block
         tip(1)
@@ -223,12 +206,13 @@ class ReplayProtectionTest(ComparisonTestFramework):
         bfork = block(5555)
         bfork.nTime = REPLAY_PROTECTION_START_TIME - 1
         update_block(5555, [])
-        yield accepted()
+        node.p2p.send_blocks_and_test([self.tip], node)
 
+        activation_blocks = []
         for i in range(5):
             block(5100 + i)
-            test.blocks_and_transactions.append([self.tip, True])
-        yield test
+            activation_blocks.append(self.tip)
+        node.p2p.send_blocks_and_test(activation_blocks, node)
 
         # Check we are just before the activation time
         assert_equal(node.getblockheader(node.getbestblockhash())['mediantime'],
@@ -240,7 +224,8 @@ class ReplayProtectionTest(ComparisonTestFramework):
 
         block(3)
         update_block(3, replay_txns)
-        yield rejected(RejectResult(16, b'blk-bad-inputs'))
+        node.p2p.send_blocks_and_test(
+            [self.tip], node, success=False, reject_reason='blk-bad-inputs')
 
         # Rewind bad block
         tip(5104)
@@ -253,7 +238,7 @@ class ReplayProtectionTest(ComparisonTestFramework):
 
         # Activate the replay protection
         block(5556)
-        yield accepted()
+        node.p2p.send_blocks_and_test([self.tip], node)
 
         # Check we just activated the replay protection
         assert_equal(node.getblockheader(node.getbestblockhash())['mediantime'],
@@ -261,7 +246,7 @@ class ReplayProtectionTest(ComparisonTestFramework):
 
         # Non replay protected transactions are not valid anymore,
         # so they should be removed from the mempool.
-        assert(tx_id not in set(node.getrawmempool()))
+        assert tx_id not in set(node.getrawmempool())
 
         # Good old transactions are now invalid.
         send_transaction_to_mempool(txns[0])
@@ -271,7 +256,8 @@ class ReplayProtectionTest(ComparisonTestFramework):
         # They also cannot be mined
         block(4)
         update_block(4, txns)
-        yield rejected(RejectResult(16, b'blk-bad-inputs'))
+        node.p2p.send_blocks_and_test(
+            [self.tip], node, success=False, reject_reason='blk-bad-inputs')
 
         # Rewind bad block
         tip(5556)
@@ -293,37 +279,37 @@ class ReplayProtectionTest(ComparisonTestFramework):
             elif txid == replay_tx1_id:
                 found_id1 = True
 
-        assert(found_id0 and found_id1)
+        assert found_id0 and found_id1
 
         # And the mempool is still in good shape.
-        assert(replay_tx0_id in set(node.getrawmempool()))
-        assert(replay_tx1_id in set(node.getrawmempool()))
+        assert replay_tx0_id in set(node.getrawmempool())
+        assert replay_tx1_id in set(node.getrawmempool())
 
         # They also can also be mined
-        b5 = block(5)
+        block(5)
         update_block(5, replay_txns)
-        yield accepted()
+        node.p2p.send_blocks_and_test([self.tip], node)
 
-        # Ok, now we check if a reorg work properly accross the activation.
+        # Ok, now we check if a reorg work properly across the activation.
         postforkblockid = node.getbestblockhash()
         node.invalidateblock(postforkblockid)
-        assert(replay_tx0_id in set(node.getrawmempool()))
-        assert(replay_tx1_id in set(node.getrawmempool()))
+        assert replay_tx0_id in set(node.getrawmempool())
+        assert replay_tx1_id in set(node.getrawmempool())
 
         # Deactivating replay protection.
         forkblockid = node.getbestblockhash()
         node.invalidateblock(forkblockid)
         # The funding tx is not evicted from the mempool, since it's valid in
         # both sides of the fork
-        assert(replay_tx0_id in set(node.getrawmempool()))
-        assert(replay_tx1_id not in set(node.getrawmempool()))
+        assert replay_tx0_id in set(node.getrawmempool())
+        assert replay_tx1_id not in set(node.getrawmempool())
 
         # Check that we also do it properly on deeper reorg.
         node.reconsiderblock(forkblockid)
         node.reconsiderblock(postforkblockid)
         node.invalidateblock(forkblockid)
-        assert(replay_tx0_id in set(node.getrawmempool()))
-        assert(replay_tx1_id not in set(node.getrawmempool()))
+        assert replay_tx0_id in set(node.getrawmempool())
+        assert replay_tx1_id not in set(node.getrawmempool())
 
 
 if __name__ == '__main__':

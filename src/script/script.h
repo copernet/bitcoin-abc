@@ -31,6 +31,9 @@ static const int MAX_PUBKEYS_PER_MULTISIG = 20;
 // Maximum script length in bytes
 static const int MAX_SCRIPT_SIZE = 10000;
 
+// Maximum number of values on script interpreter stack
+static const int MAX_STACK_SIZE = 1000;
+
 // Threshold for nLockTime: below this value it is interpreted as block number,
 // otherwise as UNIX timestamp. Thresold is Tue Nov 5 00:53:20 1985 UTC
 static const unsigned int LOCKTIME_THRESHOLD = 500000000;
@@ -186,16 +189,19 @@ enum opcodetype {
     OP_PREFIX_BEGIN = 0xf0,
     OP_PREFIX_END = 0xf7,
 
-    // template matching params
-    OP_SMALLINTEGER = 0xfa,
-    OP_PUBKEYS = 0xfb,
-    OP_PUBKEYHASH = 0xfd,
-    OP_PUBKEY = 0xfe,
-
     OP_INVALIDOPCODE = 0xff,
 };
 
+// Maximum value that an opcode can be
+static const unsigned int MAX_OPCODE = FIRST_UNDEFINED_OP_VALUE - 1;
+
 const char *GetOpName(opcodetype opcode);
+
+/**
+ * Check whether the given stack element data would be minimally pushed using
+ * the given opcode.
+ */
+bool CheckMinimalPush(const std::vector<uint8_t> &data, opcodetype opcode);
 
 class scriptnum_error : public std::runtime_error {
 public:
@@ -340,10 +346,11 @@ public:
     }
 
     int getint() const {
-        if (m_value > std::numeric_limits<int>::max())
+        if (m_value > std::numeric_limits<int>::max()) {
             return std::numeric_limits<int>::max();
-        else if (m_value < std::numeric_limits<int>::min())
+        } else if (m_value < std::numeric_limits<int>::min()) {
             return std::numeric_limits<int>::min();
+        }
         return m_value;
     }
 
@@ -403,7 +410,17 @@ private:
     int64_t m_value;
 };
 
+/**
+ * We use a prevector for the script to reduce the considerable memory overhead
+ * of vectors in cases where they normally contain a small number of small
+ * elements. Tests in October 2015 showed use of this reduced dbcache memory
+ * usage by 23% and made an initial sync 13% faster.
+ */
 typedef prevector<28, uint8_t> CScriptBase;
+
+bool GetScriptOp(CScriptBase::const_iterator &pc,
+                 CScriptBase::const_iterator end, opcodetype &opcodeRet,
+                 std::vector<uint8_t> *pvchRet);
 
 /** Serialized script, used inside transaction inputs and outputs */
 class CScript : public CScriptBase {
@@ -433,10 +450,11 @@ public:
 
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(static_cast<CScriptBase &>(*this));
+        READWRITEAS(CScriptBase, *this);
     }
 
     CScript &operator+=(const CScript &b) {
+        reserve(size() + b.size());
         insert(end(), b.begin(), b.end());
         return *this;
     }
@@ -498,68 +516,13 @@ public:
         return *this;
     }
 
-    bool GetOp(iterator &pc, opcodetype &opcodeRet,
-               std::vector<uint8_t> &vchRet) {
-        // Wrapper so it can be called with either iterator or const_iterator.
-        const_iterator pc2 = pc;
-        bool fRet = GetOp2(pc2, opcodeRet, &vchRet);
-        pc = begin() + (pc2 - begin());
-        return fRet;
-    }
-
-    bool GetOp(iterator &pc, opcodetype &opcodeRet) {
-        const_iterator pc2 = pc;
-        bool fRet = GetOp2(pc2, opcodeRet, nullptr);
-        pc = begin() + (pc2 - begin());
-        return fRet;
-    }
-
     bool GetOp(const_iterator &pc, opcodetype &opcodeRet,
                std::vector<uint8_t> &vchRet) const {
-        return GetOp2(pc, opcodeRet, &vchRet);
+        return GetScriptOp(pc, end(), opcodeRet, &vchRet);
     }
 
     bool GetOp(const_iterator &pc, opcodetype &opcodeRet) const {
-        return GetOp2(pc, opcodeRet, nullptr);
-    }
-
-    bool GetOp2(const_iterator &pc, opcodetype &opcodeRet,
-                std::vector<uint8_t> *pvchRet) const {
-        opcodeRet = OP_INVALIDOPCODE;
-        if (pvchRet) pvchRet->clear();
-        if (pc >= end()) return false;
-
-        // Read instruction
-        if (end() - pc < 1) return false;
-
-        uint32_t opcode = *pc++;
-
-        // Immediate operand
-        if (opcode <= OP_PUSHDATA4) {
-            uint32_t nSize = 0;
-            if (opcode < OP_PUSHDATA1) {
-                nSize = opcode;
-            } else if (opcode == OP_PUSHDATA1) {
-                if (end() - pc < 1) return false;
-                nSize = *pc++;
-            } else if (opcode == OP_PUSHDATA2) {
-                if (end() - pc < 2) return false;
-                nSize = ReadLE16(&pc[0]);
-                pc += 2;
-            } else if (opcode == OP_PUSHDATA4) {
-                if (end() - pc < 4) return false;
-                nSize = ReadLE32(&pc[0]);
-                pc += 4;
-            }
-            if (end() - pc < 0 || uint32_t(end() - pc) < nSize) {
-                return false;
-            }
-            if (pvchRet) pvchRet->assign(pc, pc + nSize);
-            pc += nSize;
-        }
-
-        opcodeRet = static_cast<opcodetype>(opcode);
-        return true;
+        return GetScriptOp(pc, end(), opcodeRet, nullptr);
     }
 
     /** Encode/decode small integers: */
@@ -578,43 +541,6 @@ public:
         }
 
         return (opcodetype)(OP_1 + n - 1);
-    }
-
-    int FindAndDelete(const CScript &b) {
-        int nFound = 0;
-        if (b.empty()) {
-            return nFound;
-        }
-
-        CScript result;
-        iterator pc = begin(), pc2 = begin();
-        opcodetype opcode;
-        do {
-            result.insert(result.end(), pc2, pc);
-            while (size_t(end() - pc) >= b.size() &&
-                   std::equal(b.begin(), b.end(), pc)) {
-                pc = pc + b.size();
-                ++nFound;
-            }
-            pc2 = pc;
-        } while (GetOp(pc, opcode));
-
-        if (nFound > 0) {
-            result.insert(result.end(), pc2, end());
-            *this = result;
-        }
-
-        return nFound;
-    }
-    int Find(opcodetype op) const {
-        int nFound = 0;
-        opcodetype opcode;
-        for (const_iterator pc = begin(); pc != end() && GetOp(pc, opcode);) {
-            if (opcode == op) {
-                ++nFound;
-            }
-        }
-        return nFound;
     }
 
     /**
@@ -642,6 +568,9 @@ public:
      */
     bool IsPushOnly(const_iterator pc) const;
     bool IsPushOnly() const;
+
+    /** Check if the script contains valid OP_CODES */
+    bool HasValidOps() const;
 
     /**
      * Returns whether the script is guaranteed to fail at execution, regardless

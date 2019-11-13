@@ -6,10 +6,12 @@
 #define BITCOIN_QT_BITCOINGUI_H
 
 #if defined(HAVE_CONFIG_H)
-#include "config/bitcoin-config.h"
+#include <config/bitcoin-config.h>
 #endif
 
-#include "amount.h"
+#include <qt/optionsdialog.h>
+
+#include <amount.h>
 
 #include <QLabel>
 #include <QMainWindow>
@@ -34,12 +36,11 @@ class HelpMessageDialog;
 class ModalOverlay;
 
 class Config;
-class CWallet;
 
 namespace interfaces {
 class Handler;
 class Node;
-}
+} // namespace interfaces
 
 QT_BEGIN_NAMESPACE
 class QAction;
@@ -47,6 +48,11 @@ class QComboBox;
 class QProgressBar;
 class QProgressDialog;
 QT_END_NAMESPACE
+
+namespace GUIUtil {
+class ClickableLabel;
+class ClickableProgressBar;
+} // namespace GUIUtil
 
 /**
  * Bitcoin GUI main class. This class represents the main window of the Bitcoin
@@ -78,6 +84,7 @@ public:
      * list of transactions, address book and sending functionality.
      */
     bool addWallet(WalletModel *walletModel);
+    bool removeWallet(WalletModel *walletModel);
     void removeAllWallets();
 #endif // ENABLE_WALLET
     bool enableWallet = false;
@@ -100,10 +107,11 @@ private:
     UnitDisplayStatusBarControl *unitDisplayControl = nullptr;
     QLabel *labelWalletEncryptionIcon = nullptr;
     QLabel *labelWalletHDStatusIcon = nullptr;
-    QLabel *connectionsControl = nullptr;
-    QLabel *labelBlocksIcon = nullptr;
+    GUIUtil::ClickableLabel *labelProxyIcon = nullptr;
+    GUIUtil::ClickableLabel *connectionsControl = nullptr;
+    GUIUtil::ClickableLabel *labelBlocksIcon = nullptr;
     QLabel *progressBarLabel = nullptr;
-    QProgressBar *progressBar = nullptr;
+    GUIUtil::ClickableProgressBar *progressBar = nullptr;
     QProgressDialog *progressDialog = nullptr;
 
     QMenuBar *appMenuBar = nullptr;
@@ -129,6 +137,8 @@ private:
     QAction *openRPCConsoleAction = nullptr;
     QAction *openAction = nullptr;
     QAction *showHelpMessageAction = nullptr;
+    QAction *m_wallet_selector_label_action = nullptr;
+    QAction *m_wallet_selector_action = nullptr;
 
     QLabel *m_wallet_selector_label = nullptr;
     QComboBox *m_wallet_selector = nullptr;
@@ -171,6 +181,9 @@ private:
 
     void updateHeadersSyncProgressLabel();
 
+    /** Open the OptionsDialog on the specified tab index */
+    void openOptionsDialogWithTab(OptionsDialog::Tab tab);
+
 Q_SIGNALS:
     /** Signal raised when a URI was entered or dragged to the GUI */
     void receivedURI(const QString &uri);
@@ -199,6 +212,7 @@ public Q_SLOTS:
 
 #ifdef ENABLE_WALLET
     bool setCurrentWallet(const QString &name);
+    bool setCurrentWalletBySelectorIndex(int index);
     /** Set the UI status indicators based on the currently selected wallet.
      */
     void updateWalletStatus();
@@ -225,7 +239,11 @@ public Q_SLOTS:
                              const QString &label, const QString &walletName);
 #endif // ENABLE_WALLET
 
-private Q_SLOTS:
+private:
+    /** Set the proxy-enabled icon as shown in the UI. */
+    void updateProxyIcon();
+
+public Q_SLOTS:
 #ifdef ENABLE_WALLET
     /** Switch to overview (home) page */
     void gotoOverviewPage();
@@ -261,7 +279,8 @@ private Q_SLOTS:
 
     /** Show window if hidden, unminimize when minimized, rise when obscured or
      * show if hidden and fToggleHidden is true */
-    void showNormalIfMinimized(bool fToggleHidden = false);
+    void showNormalIfMinimized() { showNormalIfMinimized(false); }
+    void showNormalIfMinimized(bool fToggleHidden);
     /** Simply calls showNormalIfMinimized(true) for use in SLOT() macro */
     void toggleHidden();
 
@@ -274,9 +293,6 @@ private Q_SLOTS:
     /** When hideTrayIcon setting is changed in OptionsModel hide or show the
      * icon accordingly. */
     void setTrayIconVisible(bool);
-
-    /** Toggle networking */
-    void toggleNetworkActive();
 
     void showModalOverlay();
 };

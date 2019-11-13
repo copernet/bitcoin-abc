@@ -4,14 +4,15 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SCRIPT_SCRIPTFLAGS_H
-#define BITCOIN_SCRIPT_SCRIPTFLAGS_H
+#ifndef BITCOIN_SCRIPT_SCRIPT_FLAGS_H
+#define BITCOIN_SCRIPT_SCRIPT_FLAGS_H
 
 /** Script verification flags */
 enum {
     SCRIPT_VERIFY_NONE = 0,
 
     // Evaluate P2SH subscripts (softfork safe, BIP16).
+    // Note: The Segwit Recovery feature is an exception to P2SH
     SCRIPT_VERIFY_P2SH = (1U << 0),
 
     // Passing a non-strict-DER signature or one with undefined hashtype to a
@@ -63,6 +64,7 @@ enum {
     // be true".
     // (softfork safe, BIP62 rule 6)
     // Note: CLEANSTACK should never be used without P2SH or WITNESS.
+    // Note: The Segwit Recovery feature is an exception to CLEANSTACK
     SCRIPT_VERIFY_CLEANSTACK = (1U << 8),
 
     // Verify CHECKLOCKTIMEVERIFY
@@ -95,17 +97,19 @@ enum {
     //
     SCRIPT_ENABLE_REPLAY_PROTECTION = (1U << 17),
 
-    // Is OP_CHECKDATASIG and variant are enabled.
+    // Count sigops for OP_CHECKDATASIG and variant. The interpreter treats
+    // OP_CHECKDATASIG(VERIFY) as always valid, this flag only affects sigops
+    // counting.
     //
-    SCRIPT_ENABLE_CHECKDATASIG = (1U << 18),
+    SCRIPT_VERIFY_CHECKDATASIG_SIGOPS = (1U << 18),
 
-    // Are Schnorr signatures enabled for OP_CHECK(DATA)SIG(VERIFY) and
-    // 65-byte signatures banned for OP_CHECKMULTISIG(VERIFY)?
-    //
-    SCRIPT_ENABLE_SCHNORR = (1U << 19),
+    // The exception to CLEANSTACK and P2SH for the recovery of coins sent
+    // to p2sh segwit addresses is not allowed.
+    SCRIPT_DISALLOW_SEGWIT_RECOVERY = (1U << 20),
 
-    // Allows the recovery of coins sent to p2sh segwit addresses
-    SCRIPT_ALLOW_SEGWIT_RECOVERY = (1U << 20),
+    // Whether to allow new OP_CHECKMULTISIG logic to trigger. (new multisig
+    // logic verifies faster, and only allows Schnorr signatures)
+    SCRIPT_ENABLE_SCHNORR_MULTISIG = (1U << 21),
 };
 
-#endif // BITCOIN_SCRIPT_SCRIPTFLAGS_H
+#endif // BITCOIN_SCRIPT_SCRIPT_FLAGS_H

@@ -31,7 +31,7 @@ class CPubKey;
 
 namespace interfaces {
 class Node;
-} // namespace interface
+} // namespace interfaces
 
 QT_BEGIN_NAMESPACE
 class QTimer;
@@ -218,8 +218,13 @@ public:
 
     bool isMultiwallet();
 
+    AddressTableModel *getAddressTableModel() const {
+        return addressTableModel;
+    }
+
 private:
     std::unique_ptr<interfaces::Wallet> m_wallet;
+    std::unique_ptr<interfaces::Handler> m_handler_unload;
     std::unique_ptr<interfaces::Handler> m_handler_status_changed;
     std::unique_ptr<interfaces::Handler> m_handler_address_book_changed;
     std::unique_ptr<interfaces::Handler> m_handler_transaction_changed;
@@ -228,7 +233,7 @@ private:
     interfaces::Node &m_node;
 
     bool fHaveWatchOnly;
-    bool fForceCheckBalanceChanged;
+    bool fForceCheckBalanceChanged{false};
 
     // Wallet has an options model for wallet-specific options (transaction fee,
     // for example)
@@ -274,6 +279,9 @@ Q_SIGNALS:
 
     // Watch-only address added
     void notifyWatchonlyChanged(bool fHaveWatchonly);
+
+    // Signal that wallet is about to be removed
+    void unload();
 
 public Q_SLOTS:
     /** Wallet status might have changed. */

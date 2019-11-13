@@ -14,6 +14,8 @@
 
 class CCoinsViewCache;
 class CTransaction;
+class CTxIn;
+class CTxOut;
 
 /**
  * Default for -blockmaxsize, which controls the maximum size of block the
@@ -80,33 +82,30 @@ static const Amount DUST_RELAY_TX_FEE(1000 * SATOSHI);
  * with. However scripts violating these flags may still be present in valid
  * blocks and we must accept those blocks.
  */
-static const uint32_t STANDARD_SCRIPT_VERIFY_FLAGS =
-    MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_DERSIG | SCRIPT_VERIFY_LOW_S |
+static constexpr uint32_t STANDARD_SCRIPT_VERIFY_FLAGS =
+    MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_DERSIG |
     SCRIPT_VERIFY_NULLDUMMY | SCRIPT_VERIFY_SIGPUSHONLY |
     SCRIPT_VERIFY_MINIMALDATA | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS |
     SCRIPT_VERIFY_CLEANSTACK | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY |
-    SCRIPT_VERIFY_CHECKSEQUENCEVERIFY | SCRIPT_VERIFY_NULLFAIL;
+    SCRIPT_VERIFY_CHECKSEQUENCEVERIFY | SCRIPT_VERIFY_CHECKDATASIG_SIGOPS |
+    SCRIPT_DISALLOW_SEGWIT_RECOVERY;
 
 /**
  * For convenience, standard but not mandatory verify flags.
  */
-static const uint32_t STANDARD_NOT_MANDATORY_VERIFY_FLAGS =
+static constexpr uint32_t STANDARD_NOT_MANDATORY_VERIFY_FLAGS =
     STANDARD_SCRIPT_VERIFY_FLAGS & ~MANDATORY_SCRIPT_VERIFY_FLAGS;
 
 /**
  * Used as the flags parameter to sequence and nLocktime checks in non-consensus
  * code.
  */
-static const uint32_t STANDARD_LOCKTIME_VERIFY_FLAGS =
+static constexpr uint32_t STANDARD_LOCKTIME_VERIFY_FLAGS =
     LOCKTIME_VERIFY_SEQUENCE | LOCKTIME_MEDIAN_TIME_PAST;
 
-/**
- * Used as the flags parameters to check for sigops as if OP_CHECKDATASIG is
- * enabled. Can be removed after OP_CHECKDATASIG is activated as the flag is
- * made standard.
- */
-static const uint32_t STANDARD_CHECKDATASIG_VERIFY_FLAGS =
-    STANDARD_SCRIPT_VERIFY_FLAGS | SCRIPT_ENABLE_CHECKDATASIG;
+Amount GetDustThreshold(const CTxOut &txout, const CFeeRate &dustRelayFee);
+
+bool IsDust(const CTxOut &txout, const CFeeRate &dustRelayFee);
 
 bool IsStandard(const CScript &scriptPubKey, txnouttype &whichType);
 
@@ -126,8 +125,23 @@ bool IsStandardTx(const CTransaction &tx, std::string &reason);
 bool AreInputsStandard(const CTransaction &tx,
                        const CCoinsViewCache &mapInputs);
 
-extern CFeeRate incrementalRelayFee;
 extern CFeeRate dustRelayFee;
 extern uint32_t nBytesPerSigOp;
+
+/** Compute the virtual transaction size (weight reinterpreted as bytes). */
+int64_t GetVirtualTransactionSize(int64_t nSize, int64_t nSigOpCost,
+                                  unsigned int bytes_per_sigop);
+int64_t GetVirtualTransactionSize(const CTransaction &tx, int64_t nSigOpCost,
+                                  unsigned int bytes_per_sigop);
+int64_t GetVirtualTransactionInputSize(const CTxIn &txin, int64_t nSigOpCost,
+                                       unsigned int bytes_per_sigop);
+
+static inline int64_t GetVirtualTransactionSize(const CTransaction &tx) {
+    return GetVirtualTransactionSize(tx, 0, 0);
+}
+
+static inline int64_t GetVirtualTransactionInputSize(const CTxIn &txin) {
+    return GetVirtualTransactionInputSize(txin, 0, 0);
+}
 
 #endif // BITCOIN_POLICY_POLICY_H

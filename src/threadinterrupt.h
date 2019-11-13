@@ -19,6 +19,7 @@
  */
 class CThreadInterrupt {
 public:
+    CThreadInterrupt();
     explicit operator bool() const;
     void operator()();
     void reset();
@@ -28,7 +29,7 @@ public:
 
 private:
     std::condition_variable cond;
-    CWaitableCriticalSection mut;
+    Mutex mut;
     std::atomic<bool> flag;
 };
 

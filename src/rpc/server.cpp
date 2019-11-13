@@ -6,21 +6,20 @@
 
 #include <rpc/server.h>
 
-#include <base58.h>
 #include <config.h>
 #include <fs.h>
 #include <init.h>
+#include <key_io.h>
 #include <random.h>
 #include <sync.h>
 #include <ui_interface.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <univalue.h>
 
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
-#include <boost/bind.hpp>
 #include <boost/signals2/signal.hpp>
 
 #include <memory> // for unique_ptr
@@ -88,10 +87,10 @@ void RPCServerSignals::OnStopped(std::function<void()> slot) {
 }
 
 void RPCTypeCheck(const UniValue &params,
-                  const std::list<UniValue::VType> &typesExpected,
+                  const std::list<UniValueType> &typesExpected,
                   bool fAllowNull) {
     unsigned int i = 0;
-    for (UniValue::VType t : typesExpected) {
+    for (const UniValueType &t : typesExpected) {
         if (params.size() <= i) {
             break;
         }
@@ -104,11 +103,13 @@ void RPCTypeCheck(const UniValue &params,
     }
 }
 
-void RPCTypeCheckArgument(const UniValue &value, UniValue::VType typeExpected) {
-    if (value.type() != typeExpected) {
-        throw JSONRPCError(RPC_TYPE_ERROR, strprintf("Expected type %s, got %s",
-                                                     uvTypeName(typeExpected),
-                                                     uvTypeName(value.type())));
+void RPCTypeCheckArgument(const UniValue &value,
+                          const UniValueType &typeExpected) {
+    if (!typeExpected.typeAny && value.type() != typeExpected.type) {
+        throw JSONRPCError(RPC_TYPE_ERROR,
+                           strprintf("Expected type %s, got %s",
+                                     uvTypeName(typeExpected.type),
+                                     uvTypeName(value.type())));
     }
 }
 
@@ -157,15 +158,6 @@ Amount AmountFromValue(const UniValue &value) {
     }
 
     return amt;
-}
-
-UniValue ValueFromAmount(const Amount amount) {
-    bool sign = amount < Amount::zero();
-    Amount n_abs(sign ? -amount : amount);
-    int64_t quotient = n_abs / COIN;
-    int64_t remainder = (n_abs % COIN) / SATOSHI;
-    return UniValue(UniValue::VNUM, strprintf("%s%d.%08d", sign ? "-" : "",
-                                              quotient, remainder));
 }
 
 uint256 ParseHashV(const UniValue &v, std::string strName) {
@@ -236,11 +228,6 @@ std::string CRPCTable::help(Config &config, const std::string &strCommand,
          vCommands) {
         const ContextFreeRPCCommand *pcmd = command.second;
         std::string strMethod = pcmd->name;
-        // We already filter duplicates, but these deprecated screw up the sort
-        // order
-        if (strMethod.find("label") != std::string::npos) {
-            continue;
-        }
         if ((strCommand != "" || pcmd->category == "hidden") &&
             strMethod != strCommand) {
             continue;
@@ -379,11 +366,10 @@ bool CRPCTable::appendCommand(const std::string &name,
     return true;
 }
 
-bool StartRPC() {
+void StartRPC() {
     LogPrint(BCLog::RPC, "Starting RPC\n");
     fRPCRunning = true;
     g_rpcSignals.Started();
-    return true;
 }
 
 void InterruptRPC() {
@@ -546,11 +532,9 @@ UniValue CRPCTable::execute(Config &config,
 
 std::vector<std::string> CRPCTable::listCommands() const {
     std::vector<std::string> commandList;
-    typedef std::map<std::string, const ContextFreeRPCCommand *> commandMap;
-
-    std::transform(mapCommands.begin(), mapCommands.end(),
-                   std::back_inserter(commandList),
-                   boost::bind(&commandMap::value_type::first, _1));
+    for (const auto &i : mapCommands) {
+        commandList.emplace_back(i.first);
+    }
     return commandList;
 }
 
@@ -584,7 +568,7 @@ void RPCUnsetTimerInterface(RPCTimerInterface *iface) {
     }
 }
 
-void RPCRunLater(const std::string &name, std::function<void(void)> func,
+void RPCRunLater(const std::string &name, std::function<void()> func,
                  int64_t nSeconds) {
     if (!timerInterface) {
         throw JSONRPCError(RPC_INTERNAL_ERROR,

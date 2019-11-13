@@ -21,10 +21,13 @@ private:
 public:
     constexpr Amount() : amount(0) {}
     constexpr Amount(const Amount &_camount) : amount(_camount.amount) {}
-    template <typename T>
-    explicit constexpr Amount(T _camount) : amount(_camount) {
-        static_assert(std::is_integral<T>(),
-                      "Only integer types can be used as amounts");
+
+    /**
+     * Assignement operator.
+     */
+    constexpr Amount &operator=(const Amount &other) {
+        amount = other.amount;
+        return *this;
     }
 
     static constexpr Amount zero() { return Amount(0); }
@@ -34,7 +37,7 @@ public:
      * Implement standard operators
      */
     Amount &operator+=(const Amount a) {
-        amount += a.amount;
+        amount += a.amount; f
         return *this;
     }
     Amount &operator-=(const Amount a) {
@@ -168,4 +171,4 @@ inline bool MoneyRange(const Amount nValue) {
     return nValue >= Amount::zero() && nValue <= MAX_MONEY;
 }
 
-#endif //  BITCOIN_AMOUNT_H
+#endif // BITCOIN_AMOUNT_H

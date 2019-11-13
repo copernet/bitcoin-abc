@@ -10,24 +10,34 @@
 
 #include <script/interpreter.h>
 #include <tinyformat.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 #include <validation.h>
 
-/**
- * Check transaction inputs to mitigate two potential denial-of-service attacks:
- *
- * 1. scriptSigs with extra data stuffed into them, not consumed by scriptPubKey
- * (or P2SH script)
- * 2. P2SH scripts with a crazy number of expensive CHECKSIG/CHECKMULTISIG
- * operations
- *
- * Why bother? To avoid denial-of-service attacks; an attacker can submit a
- * standard HASH... OP_EQUAL transaction, which will get accepted into blocks.
- * The redemption script can be anything; an attacker could use a very
- * expensive-to-check-upon-redemption script like:
- *   DUP CHECKSIG DROP ... repeated 100 times... OP_1
- */
+Amount GetDustThreshold(const CTxOut &txout, const CFeeRate &dustRelayFeeIn) {
+    /**
+     * "Dust" is defined in terms of dustRelayFee, which has units
+     * satoshis-per-kilobyte. If you'd pay more than 1/3 in fees to spend
+     * something, then we consider it dust.  A typical spendable txout is 34
+     * bytes big, and will need a CTxIn of at least 148 bytes to spend: so dust
+     * is a spendable txout less than 546*dustRelayFee/1000 (in satoshis).
+     */
+    if (txout.scriptPubKey.IsUnspendable()) {
+        return Amount::zero();
+    }
+
+    size_t nSize = GetSerializeSize(txout, SER_DISK, 0);
+
+    // the 148 mentioned above
+    nSize += (32 + 4 + 1 + 107 + 4);
+
+    return 3 * dustRelayFeeIn.GetFee(nSize);
+}
+
+bool IsDust(const CTxOut &txout, const CFeeRate &dustRelayFeeIn) {
+    return (txout.nValue < GetDustThreshold(txout, dustRelayFeeIn));
+}
+
 bool IsStandard(const CScript &scriptPubKey, txnouttype &whichType) {
     std::vector<std::vector<uint8_t>> vSolutions;
     if (!Solver(scriptPubKey, whichType, vSolutions)) {
@@ -95,7 +105,7 @@ bool IsStandardTx(const CTransaction &tx, std::string &reason) {
         } else if ((whichType == TX_MULTISIG) && (!fIsBareMultisigStd)) {
             reason = "bare-multisig";
             return false;
-        } else if (txout.IsDust(dustRelayFee)) {
+        } else if (IsDust(txout, ::dustRelayFee)) {
             reason = "dust";
             return false;
         }
@@ -110,6 +120,22 @@ bool IsStandardTx(const CTransaction &tx, std::string &reason) {
     return true;
 }
 
+/**
+ * Check transaction inputs to mitigate two
+ * potential denial-of-service attacks:
+ *
+ * 1. scriptSigs with extra data stuffed into them,
+ *    not consumed by scriptPubKey (or P2SH script)
+ * 2. P2SH scripts with a crazy number of expensive
+ *    CHECKSIG/CHECKMULTISIG operations
+ *
+ * Why bother? To avoid denial-of-service attacks; an attacker
+ * can submit a standard HASH... OP_EQUAL transaction,
+ * which will get accepted into blocks. The redemption
+ * script can be anything; an attacker could use a very
+ * expensive-to-check-upon-redemption script like:
+ *   DUP CHECKSIG DROP ... repeated 100 times... OP_1
+ */
 bool AreInputsStandard(const CTransaction &tx,
                        const CCoinsViewCache &mapInputs) {
     if (tx.IsCoinBase()) {
@@ -141,8 +167,8 @@ bool AreInputsStandard(const CTransaction &tx,
             }
 
             CScript subscript(stack.back().begin(), stack.back().end());
-            if (subscript.GetSigOpCount(STANDARD_CHECKDATASIG_VERIFY_FLAGS,
-                                        true) > MAX_P2SH_SIGOPS) {
+            if (subscript.GetSigOpCount(STANDARD_SCRIPT_VERIFY_FLAGS, true) >
+                MAX_P2SH_SIGOPS) {
                 return false;
             }
         }
@@ -153,3 +179,22 @@ bool AreInputsStandard(const CTransaction &tx,
 
 CFeeRate dustRelayFee = CFeeRate(DUST_RELAY_TX_FEE);
 uint32_t nBytesPerSigOp = DEFAULT_BYTES_PER_SIGOP;
+
+int64_t GetVirtualTransactionSize(int64_t nSize, int64_t nSigOpCost,
+                                  unsigned int bytes_per_sigop) {
+    return nSize;
+}
+
+int64_t GetVirtualTransactionSize(const CTransaction &tx, int64_t nSigOpCost,
+                                  unsigned int bytes_per_sigop) {
+    return GetVirtualTransactionSize(
+        ::GetSerializeSize(tx, SER_NETWORK, PROTOCOL_VERSION), nSigOpCost,
+        bytes_per_sigop);
+}
+
+int64_t GetVirtualTransactionInputSize(const CTxIn &txin, int64_t nSigOpCost,
+                                       unsigned int bytes_per_sigop) {
+    return GetVirtualTransactionSize(
+        ::GetSerializeSize(txin, SER_NETWORK, PROTOCOL_VERSION), nSigOpCost,
+        bytes_per_sigop);
+}

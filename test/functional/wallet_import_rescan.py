@@ -2,21 +2,22 @@
 # Copyright (c) 2014-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-'''
+"""Test wallet import RPCs.
+
 Test rescan behavior of importaddress, importpubkey, importprivkey, and
 importmulti RPCs with different types of keys and rescan options.
 
 In the first part of the test, node 0 creates an address for each type of
-import RPC call and node 0 sends BTC to it. Then other nodes import the
+import RPC call and node 0 sends BCH to it. Then other nodes import the
 addresses, and the test makes listtransactions and getbalance calls to confirm
 that the importing node either did or did not execute rescans picking up the
 send transactions.
 
-In the second part of the test, node 0 sends more BTC to each address, and the
+In the second part of the test, node 0 sends more BCH to each address, and the
 test makes more listtransactions and getbalance calls to confirm that the
 importing nodes pick up the new transactions regardless of whether rescans
 happened previously.
-'''
+"""
 
 import collections
 import enum
@@ -131,12 +132,13 @@ class ImportRescanTest(BitcoinTestFramework):
         self.num_nodes = 2 + len(IMPORT_NODES)
 
     def setup_network(self):
-        extra_args = [[] for _ in range(self.num_nodes)]
+        extra_args = [['-deprecatedrpc=accounts']
+                      for _ in range(self.num_nodes)]
         for i, import_node in enumerate(IMPORT_NODES, 2):
             if import_node.prune:
                 extra_args[i] += ["-prune=1"]
 
-        self.add_nodes(self.num_nodes, extra_args)
+        self.add_nodes(self.num_nodes, extra_args=extra_args)
         self.start_nodes()
         for i in range(1, self.num_nodes):
             connect_nodes(self.nodes[i], self.nodes[0])
@@ -146,7 +148,7 @@ class ImportRescanTest(BitcoinTestFramework):
         # each possible type of wallet import RPC.
         for i, variant in enumerate(IMPORT_VARIANTS):
             variant.label = "label {} {}".format(i, variant)
-            variant.address = self.nodes[1].validateaddress(
+            variant.address = self.nodes[1].getaddressinfo(
                 self.nodes[1].getnewaddress(variant.label))
             variant.key = self.nodes[1].dumpprivkey(variant.address["address"])
             variant.initial_amount = 10 - (i + 1) / 4.0

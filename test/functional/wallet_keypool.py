@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2016 The Bitcoin Core developers
+# Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
-# Exercise the wallet keypool, and interaction with wallet encryption/locking
+"""Test the wallet keypool and interaction with wallet encryption/locking."""
 import time
 
 from test_framework.test_framework import BitcoinTestFramework
@@ -18,10 +17,12 @@ class KeyPoolTest(BitcoinTestFramework):
         nodes = self.nodes
         addr_before_encrypting = nodes[0].getnewaddress()
         addr_before_encrypting_data = nodes[
-            0].validateaddress(addr_before_encrypting)
+            0].getaddressinfo(addr_before_encrypting)
         wallet_info_old = nodes[0].getwalletinfo()
-        assert(addr_before_encrypting_data[
-               'hdmasterkeyid'] == wallet_info_old['hdmasterkeyid'])
+        assert_equal(wallet_info_old['hdseedid'],
+                     wallet_info_old['hdmasterkeyid'])
+        assert addr_before_encrypting_data[
+            'hdseedid'] == wallet_info_old['hdseedid']
 
         # Encrypt wallet and wait to terminate
         nodes[0].node_encrypt_wallet('test')
@@ -29,11 +30,12 @@ class KeyPoolTest(BitcoinTestFramework):
         self.start_node(0)
         # Keep creating keys
         addr = nodes[0].getnewaddress()
-        addr_data = nodes[0].validateaddress(addr)
+        addr_data = nodes[0].getaddressinfo(addr)
         wallet_info = nodes[0].getwalletinfo()
-        assert(addr_before_encrypting_data[
-               'hdmasterkeyid'] != wallet_info['hdmasterkeyid'])
-        assert(addr_data['hdmasterkeyid'] == wallet_info['hdmasterkeyid'])
+        assert_equal(wallet_info['hdseedid'], wallet_info['hdmasterkeyid'])
+        assert addr_before_encrypting_data[
+            'hdseedid'] != wallet_info['hdseedid']
+        assert addr_data['hdseedid'] == wallet_info['hdseedid']
         assert_raises_rpc_error(
             -12, "Error: Keypool ran out, please call keypoolrefill first", nodes[0].getnewaddress)
 
@@ -64,7 +66,7 @@ class KeyPoolTest(BitcoinTestFramework):
         addr.add(nodes[0].getnewaddress())
         addr.add(nodes[0].getnewaddress())
         addr.add(nodes[0].getnewaddress())
-        assert(len(addr) == 6)
+        assert len(addr) == 6
         # the next one should fail
         assert_raises_rpc_error(
             -12, "Error: Keypool ran out, please call keypoolrefill first", nodes[0].getnewaddress)

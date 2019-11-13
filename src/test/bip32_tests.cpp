@@ -2,11 +2,13 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <base58.h>
+#include <clientversion.h>
 #include <key.h>
+#include <key_io.h>
+#include <streams.h>
 #include <uint256.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <test/test_bitcoin.h>
 
@@ -92,11 +94,11 @@ TestVector test3 =
       0);
 // clang-format on
 
-void RunTest(const TestVector &test) {
+static void RunTest(const TestVector &test) {
     std::vector<uint8_t> seed = ParseHex(test.strHexMaster);
     CExtKey key;
     CExtPubKey pubkey;
-    key.SetMaster(&seed[0], seed.size());
+    key.SetSeed(seed.data(), seed.size());
     pubkey = key.Neuter();
     for (const TestDerivation &derive : test.vDerive) {
         uint8_t data[74];
@@ -104,24 +106,14 @@ void RunTest(const TestVector &test) {
         pubkey.Encode(data);
 
         // Test private key
-        CBitcoinExtKey b58key;
-        b58key.SetKey(key);
-        BOOST_CHECK(b58key.ToString() == derive.prv);
-
-        CBitcoinExtKey b58keyDecodeCheck(derive.prv);
-        CExtKey checkKey = b58keyDecodeCheck.GetKey();
-        // ensure a base58 decoded key also matches
-        assert(checkKey == key);
+        BOOST_CHECK(EncodeExtKey(key) == derive.prv);
+        // Ensure a base58 decoded key also matches
+        BOOST_CHECK(DecodeExtKey(derive.prv) == key);
 
         // Test public key
-        CBitcoinExtPubKey b58pubkey;
-        b58pubkey.SetKey(pubkey);
-        BOOST_CHECK(b58pubkey.ToString() == derive.pub);
-
-        CBitcoinExtPubKey b58PubkeyDecodeCheck(derive.pub);
-        CExtPubKey checkPubKey = b58PubkeyDecodeCheck.GetKey();
-        // ensure a base58 decoded pubkey also matches
-        assert(checkPubKey == pubkey);
+        BOOST_CHECK(EncodeExtPubKey(pubkey) == derive.pub);
+        // Ensure a base58 decoded pubkey also matches
+        BOOST_CHECK(DecodeExtPubKey(derive.pub) == pubkey);
 
         // Derive new keys
         CExtKey keyNew;

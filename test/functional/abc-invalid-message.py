@@ -15,7 +15,6 @@ from test_framework.mininode import (
     MAGIC_BYTES,
     mininode_lock,
     msg_ping,
-    network_thread_start,
     P2PInterface,
 )
 from test_framework.test_framework import BitcoinTestFramework
@@ -23,7 +22,7 @@ from test_framework.util import wait_until
 
 
 def msg_bad_checksum(connection, original_message):
-    message_data = bytearray(connection.format_message(original_message))
+    message_data = bytearray(connection._build_message(original_message))
 
     data = original_message.serialize()
     i = 0
@@ -38,7 +37,7 @@ def msg_bad_checksum(connection, original_message):
 
 class BadVersionP2PInterface(P2PInterface):
     def peer_connect(self, *args, services=NODE_NETWORK, send_version=False, **kwargs):
-        super().peer_connect(*args, send_version=send_version, **kwargs)
+        create_conn = super().peer_connect(*args, send_version=send_version, **kwargs)
 
         # Send version message with invalid checksum
         vt = msg_version()
@@ -48,7 +47,11 @@ class BadVersionP2PInterface(P2PInterface):
         vt.addrFrom.ip = "0.0.0.0"
         vt.addrFrom.port = 0
         invalid_vt = msg_bad_checksum(self, vt)
-        self.send_raw_message(invalid_vt, True)
+        # Will be sent right after connection_made
+        self.on_connection_send_msg = invalid_vt
+        self.on_connection_send_msg_is_raw = True
+
+        return create_conn
 
 
 class InvalidMessageTest(BitcoinTestFramework):
@@ -59,20 +62,17 @@ class InvalidMessageTest(BitcoinTestFramework):
     def run_test(self):
         # Try to connect to a node using an invalid checksum on version message
         bad_interface = BadVersionP2PInterface()
-        self.nodes[0].add_p2p_connection(bad_interface)
+        self.nodes[0].add_p2p_connection(
+            bad_interface, send_version=False, wait_for_verack=False)
 
         # Also connect to a node with a valid version message
         interface = P2PInterface()
+        # Node with valid version message should connect successfully
         connection = self.nodes[1].add_p2p_connection(interface)
-
-        network_thread_start()
 
         # The invalid version message should cause a disconnect on the first
         # connection because we are now banned
         bad_interface.wait_for_disconnect()
-
-        # Node with valid version message should connect successfully
-        connection.wait_for_verack()
 
         # Create a valid message
         valid_message = msg_ping(interface.ping_counter)

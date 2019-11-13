@@ -26,7 +26,7 @@ private:
 
 public:
     COutPoint() : txid(), n(-1) {}
-    COutPoint(uint256 txidIn, uint32_t nIn) : txid(TxId(txidIn)), n(nIn) {}
+    COutPoint(TxId txidIn, uint32_t nIn) : txid(txidIn), n(nIn) {}
 
     ADD_SERIALIZE_METHODS;
 
@@ -79,7 +79,7 @@ public:
      * If this flag set, CTxIn::nSequence is NOT interpreted as a relative
      * lock-time.
      */
-    static const uint32_t SEQUENCE_LOCKTIME_DISABLE_FLAG = (1 << 31);
+    static const uint32_t SEQUENCE_LOCKTIME_DISABLE_FLAG = (1U << 31);
 
     /**
      * If CTxIn::nSequence encodes a relative lock-time and this flag is set,
@@ -161,34 +161,6 @@ public:
 
     bool IsNull() const { return nValue == -SATOSHI; }
 
-    Amount GetDustThreshold(const CFeeRate &minRelayTxFee) const {
-        /**
-         * "Dust" is defined in terms of CTransaction::minRelayTxFee, which has
-         * units satoshis-per-kilobyte. If you'd pay more than 1/3 in fees to
-         * spend something, then we consider it dust. A typical spendable
-         * non-segwit txout is 34 bytes big, and will need a CTxIn of at least
-         * 148 bytes to spend: so dust is a spendable txout less than
-         * 546*minRelayTxFee/1000 (in satoshis). A typical spendable segwit
-         * txout is 31 bytes big, and will need a CTxIn of at least 67 bytes to
-         * spend: so dust is a spendable txout less than 294*minRelayTxFee/1000
-         * (in satoshis).
-         */
-        if (scriptPubKey.IsUnspendable()) {
-            return Amount::zero();
-        }
-
-        size_t nSize = GetSerializeSize(*this, SER_DISK, 0);
-
-        // the 148 mentioned above
-        nSize += (32 + 4 + 1 + 107 + 4);
-
-        return 3 * minRelayTxFee.GetFee(nSize);
-    }
-
-    bool IsDust(const CFeeRate &minRelayTxFee) const {
-        return (nValue < GetDustThreshold(minRelayTxFee));
-    }
-
     friend bool operator==(const CTxOut &a, const CTxOut &b) {
         return (a.nValue == b.nValue && a.scriptPubKey == b.scriptPubKey);
     }
@@ -250,9 +222,9 @@ public:
     // actually immutable; deserialization and assignment are implemented,
     // and bypass the constness. This is safe, as they update the entire
     // structure, including the hash.
-    const int32_t nVersion;
     const std::vector<CTxIn> vin;
     const std::vector<CTxOut> vout;
+    const int32_t nVersion;
     const uint32_t nLockTime;
 
 private:
@@ -300,10 +272,6 @@ public:
     // size)
     unsigned int CalculateModifiedSize(unsigned int nTxSize = 0) const;
 
-    // Computes an adjusted tx size so that the UTXIs are billed partially
-    // upfront.
-    size_t GetBillableSize() const;
-
     /**
      * Get the total transaction size in bytes.
      * @return Total transaction size in bytes
@@ -315,28 +283,32 @@ public:
     }
 
     friend bool operator==(const CTransaction &a, const CTransaction &b) {
-        return a.hash == b.hash;
+        return a.GetHash() == b.GetHash();
     }
 
     friend bool operator!=(const CTransaction &a, const CTransaction &b) {
-        return a.hash != b.hash;
+        return !(a == b);
     }
 
     std::string ToString() const;
 };
+#if defined(__x86_64__)
+static_assert(sizeof(CTransaction) == 88,
+              "sizeof CTransaction is expected to be 88 bytes");
+#endif
 
 /**
  * A mutable version of CTransaction.
  */
 class CMutableTransaction {
 public:
-    int32_t nVersion;
     std::vector<CTxIn> vin;
     std::vector<CTxOut> vout;
+    int32_t nVersion;
     uint32_t nLockTime;
 
     CMutableTransaction();
-    CMutableTransaction(const CTransaction &tx);
+    explicit CMutableTransaction(const CTransaction &tx);
 
     template <typename Stream> inline void Serialize(Stream &s) const {
         SerializeTransaction(*this, s);
@@ -361,9 +333,13 @@ public:
 
     friend bool operator==(const CMutableTransaction &a,
                            const CMutableTransaction &b) {
-        return a.GetId() == b.GetId();
+        return a.GetHash() == b.GetHash();
     }
 };
+#if defined(__x86_64__)
+static_assert(sizeof(CMutableTransaction) == 56,
+              "sizeof CMutableTransaction is expected to be 56 bytes");
+#endif
 
 typedef std::shared_ptr<const CTransaction> CTransactionRef;
 static inline CTransactionRef MakeTransactionRef() {
@@ -385,7 +361,7 @@ struct PrecomputedTransactionData {
         : hashPrevouts(txdata.hashPrevouts), hashSequence(txdata.hashSequence),
           hashOutputs(txdata.hashOutputs) {}
 
-    explicit PrecomputedTransactionData(const CTransaction &tx);
+    template <class T> explicit PrecomputedTransactionData(const T &tx);
 };
 
 #endif // BITCOIN_PRIMITIVES_TRANSACTION_H

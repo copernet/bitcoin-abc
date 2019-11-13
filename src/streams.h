@@ -38,7 +38,7 @@ public:
         return (*this);
     }
 
-    template <typename T> OverrideStream<Stream> &operator>>(T &obj) {
+    template <typename T> OverrideStream<Stream> &operator>>(T &&obj) {
         // Unserialize from this stream
         ::Unserialize(*this, obj);
         return (*this);
@@ -68,7 +68,7 @@ public:
      * @param[in]  nVersionIn Serialization Version (including any flags)
      * @param[in]  vchDataIn  Referenced byte vector to overwrite/append
      * @param[in]  nPosIn Starting position. Vector index where writes should
-     * start. The vector will initially grow as necessary to  max(index,
+     * start. The vector will initially grow as necessary to  max(nPosIn,
      * vec.size()). So to append, use vec.size().
      */
     CVectorWriter(int nTypeIn, int nVersionIn, std::vector<uint8_t> &vchDataIn,
@@ -79,7 +79,7 @@ public:
     }
     /**
      * (other params same as above)
-     * @param[in]  args  A list of items to serialize starting at nPos.
+     * @param[in]  args  A list of items to serialize starting at nPosIn.
      */
     template <typename... Args>
     CVectorWriter(int nTypeIn, int nVersionIn, std::vector<uint8_t> &vchDataIn,
@@ -425,7 +425,9 @@ public:
 
     template <typename Stream> void Serialize(Stream &s) const {
         // Special case: stream << stream concatenates like stream += stream
-        if (!vch.empty()) s.write((char *)&vch[0], vch.size() * sizeof(vch[0]));
+        if (!vch.empty()) {
+            s.write((char *)vch.data(), vch.size() * sizeof(value_type));
+        }
     }
 
     template <typename T> CDataStream &operator<<(const T &obj) {
@@ -434,7 +436,7 @@ public:
         return (*this);
     }
 
-    template <typename T> CDataStream &operator>>(T &obj) {
+    template <typename T> CDataStream &operator>>(T &&obj) {
         // Unserialize from this stream
         ::Unserialize(*this, obj);
         return (*this);
@@ -572,10 +574,6 @@ public:
  */
 class CAutoFile {
 private:
-    // Disallow copies
-    CAutoFile(const CAutoFile &);
-    CAutoFile &operator=(const CAutoFile &);
-
     const int nType;
     const int nVersion;
 
@@ -588,6 +586,10 @@ public:
     }
 
     ~CAutoFile() { fclose(); }
+
+    // Disallow copies
+    CAutoFile(const CAutoFile &) = delete;
+    CAutoFile &operator=(const CAutoFile &) = delete;
 
     void fclose() {
         if (file) {
@@ -666,7 +668,7 @@ public:
         return (*this);
     }
 
-    template <typename T> CAutoFile &operator>>(T &obj) {
+    template <typename T> CAutoFile &operator>>(T &&obj) {
         // Unserialize from this stream
         if (!file)
             throw std::ios_base::failure(
@@ -686,10 +688,6 @@ public:
  */
 class CBufferedFile {
 private:
-    // Disallow copies
-    CBufferedFile(const CBufferedFile &);
-    CBufferedFile &operator=(const CBufferedFile &);
-
     const int nType;
     const int nVersion;
 
@@ -734,6 +732,10 @@ public:
     }
 
     ~CBufferedFile() { fclose(); }
+
+    // Disallow copies
+    CBufferedFile(const CBufferedFile &) = delete;
+    CBufferedFile &operator=(const CBufferedFile &) = delete;
 
     int GetVersion() const { return nVersion; }
     int GetType() const { return nType; }
@@ -801,7 +803,7 @@ public:
         return true;
     }
 
-    template <typename T> CBufferedFile &operator>>(T &obj) {
+    template <typename T> CBufferedFile &operator>>(T &&obj) {
         // Unserialize from this stream
         ::Unserialize(*this, obj);
         return (*this);

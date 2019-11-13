@@ -25,6 +25,12 @@ struct CCheckpointData {
     MapCheckpoints mapCheckpoints;
 };
 
+/**
+ * Holds various statistics on transactions within a chain. Used to estimate
+ * verification progress during chain sync.
+ *
+ * See also: CChainParams::TxData, GuessVerificationProgress.
+ */
 struct ChainTxData {
     int64_t nTime;
     int64_t nTxCount;
@@ -105,6 +111,9 @@ protected:
  * @throws a std::runtime_error if the chain is not supported.
  */
 std::unique_ptr<CChainParams> CreateChainParams(const std::string &chain);
+
+CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits,
+                          int32_t nVersion, const Amount genesisReward);
 
 /**
  * Return the currently selected parameters. This won't change after app

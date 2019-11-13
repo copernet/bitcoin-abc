@@ -8,12 +8,13 @@
 #include <chainparamsbase.h>
 #include <compat.h>
 #include <config.h>
+#include <logging.h>
 #include <netbase.h>
 #include <rpc/protocol.h> // For HTTP status codes
 #include <sync.h>
 #include <ui_interface.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
@@ -72,7 +73,7 @@ private:
 template <typename WorkItem> class WorkQueue {
 private:
     /** Mutex protects entire object */
-    CWaitableCriticalSection cs;
+    Mutex cs;
     std::condition_variable cond;
     std::deque<std::unique_ptr<WorkItem>> queue;
     bool running;
@@ -102,9 +103,12 @@ public:
             std::unique_ptr<WorkItem> i;
             {
                 WAIT_LOCK(cs, lock);
-                while (running && queue.empty())
+                while (running && queue.empty()) {
                     cond.wait(lock);
-                if (!running) break;
+                }
+                if (!running) {
+                    break;
+                }
                 i = std::move(queue.front());
                 queue.pop_front();
             }
@@ -121,7 +125,6 @@ public:
 };
 
 struct HTTPPathHandler {
-    HTTPPathHandler() {}
     HTTPPathHandler(std::string _prefix, bool _exactMatch,
                     HTTPRequestHandler _handler)
         : prefix(_prefix), exactMatch(_exactMatch), handler(_handler) {}
@@ -147,9 +150,14 @@ std::vector<evhttp_bound_socket *> boundSockets;
 
 /** Check if a network address is allowed to access the HTTP server */
 static bool ClientAllowed(const CNetAddr &netaddr) {
-    if (!netaddr.IsValid()) return false;
-    for (const CSubNet &subnet : rpc_allow_subnets)
-        if (subnet.Match(netaddr)) return true;
+    if (!netaddr.IsValid()) {
+        return false;
+    }
+    for (const CSubNet &subnet : rpc_allow_subnets) {
+        if (subnet.Match(netaddr)) {
+            return true;
+        }
+    }
     return false;
 }
 
@@ -220,7 +228,7 @@ static void http_request_cb(struct evhttp_request *req, void *arg) {
             }
         }
     }
-    std::unique_ptr<HTTPRequest> hreq(new HTTPRequest(req));
+    auto hreq = std::make_unique<HTTPRequest>(req);
 
     LogPrint(BCLog::HTTP, "Received a %s request for %s from %s\n",
              RequestMethodString(hreq->GetRequestMethod()), hreq->GetURI(),
@@ -372,15 +380,14 @@ bool InitHTTPServer(Config &config) {
 
     // Redirect libevent's logging to our own log
     event_set_log_callback(&libevent_log_cb);
-#if LIBEVENT_VERSION_NUMBER >= 0x02010100
-    // If -debug=libevent, set full libevent debugging.
-    // Otherwise, disable all libevent debugging.
-    if (LogAcceptCategory(BCLog::LIBEVENT)) {
-        event_enable_debug_logging(EVENT_DBG_ALL);
-    } else {
-        event_enable_debug_logging(EVENT_DBG_NONE);
+    // Update libevent's log handling. Returns false if our version of
+    // libevent doesn't support debug logging, in which case we should
+    // clear the BCLog::LIBEVENT flag.
+    if (!UpdateHTTPServerLogging(
+            GetLogger().WillLogCategory(BCLog::LIBEVENT))) {
+        GetLogger().DisableCategory(BCLog::LIBEVENT);
     }
-#endif
+
 #ifdef WIN32
     evthread_use_windows_threads();
 #else
@@ -421,17 +428,31 @@ bool InitHTTPServer(Config &config) {
     LogPrintf("HTTP: creating work queue of depth %d\n", workQueueDepth);
 
     workQueue = new WorkQueue<HTTPClosure>(workQueueDepth);
-    // tranfer ownership to eventBase/HTTP via .release()
+    // transfer ownership to eventBase/HTTP via .release()
     eventBase = base_ctr.release();
     eventHTTP = http_ctr.release();
     return true;
+}
+
+bool UpdateHTTPServerLogging(bool enable) {
+#if LIBEVENT_VERSION_NUMBER >= 0x02010100
+    if (enable) {
+        event_enable_debug_logging(EVENT_DBG_ALL);
+    } else {
+        event_enable_debug_logging(EVENT_DBG_NONE);
+    }
+    return true;
+#else
+    // Can't update libevent logging if version < 02010100
+    return false;
+#endif
 }
 
 std::thread threadHTTP;
 std::future<bool> threadResult;
 static std::vector<std::thread> g_thread_http_workers;
 
-bool StartHTTPServer() {
+void StartHTTPServer() {
     LogPrint(BCLog::HTTP, "Starting HTTP server\n");
     int rpcThreads =
         std::max((long)gArgs.GetArg("-rpcthreads", DEFAULT_HTTP_THREADS), 1L);
@@ -443,7 +464,6 @@ bool StartHTTPServer() {
     for (int i = 0; i < rpcThreads; i++) {
         g_thread_http_workers.emplace_back(HTTPWorkQueueRun, workQueue);
     }
-    return true;
 }
 
 void InterruptHTTPServer() {
@@ -456,7 +476,9 @@ void InterruptHTTPServer() {
         // Reject requests on current connections
         evhttp_set_gencb(eventHTTP, http_reject_request_cb, nullptr);
     }
-    if (workQueue) workQueue->Interrupt();
+    if (workQueue) {
+        workQueue->Interrupt();
+    }
 }
 
 void StopHTTPServer() {
@@ -468,6 +490,7 @@ void StopHTTPServer() {
         }
         g_thread_http_workers.clear();
         delete workQueue;
+        workQueue = nullptr;
     }
     if (eventBase) {
         LogPrint(BCLog::HTTP, "Waiting for HTTP event thread to exit\n");
@@ -508,11 +531,13 @@ static void httpevent_callback_fn(evutil_socket_t, short, void *data) {
     // Static handler: simply call inner handler
     HTTPEvent *self = static_cast<HTTPEvent *>(data);
     self->handler();
-    if (self->deleteWhenTriggered) delete self;
+    if (self->deleteWhenTriggered) {
+        delete self;
+    }
 }
 
 HTTPEvent::HTTPEvent(struct event_base *base, bool _deleteWhenTriggered,
-                     const std::function<void(void)> &_handler)
+                     const std::function<void()> &_handler)
     : deleteWhenTriggered(_deleteWhenTriggered), handler(_handler) {
     ev = event_new(base, -1, 0, httpevent_callback_fn, this);
     assert(ev);
@@ -544,15 +569,18 @@ std::pair<bool, std::string> HTTPRequest::GetHeader(const std::string &hdr) {
     const struct evkeyvalq *headers = evhttp_request_get_input_headers(req);
     assert(headers);
     const char *val = evhttp_find_header(headers, hdr.c_str());
-    if (val)
+    if (val) {
         return std::make_pair(true, val);
-    else
+    } else {
         return std::make_pair(false, "");
+    }
 }
 
 std::string HTTPRequest::ReadBody() {
     struct evbuffer *buf = evhttp_request_get_input_buffer(req);
-    if (!buf) return "";
+    if (!buf) {
+        return "";
+    }
     size_t size = evbuffer_get_length(buf);
     /**
      * Trivial implementation: if this is ever a performance bottleneck,
@@ -656,8 +684,11 @@ void RegisterHTTPHandler(const std::string &prefix, bool exactMatch,
 void UnregisterHTTPHandler(const std::string &prefix, bool exactMatch) {
     std::vector<HTTPPathHandler>::iterator i = pathHandlers.begin();
     std::vector<HTTPPathHandler>::iterator iend = pathHandlers.end();
-    for (; i != iend; ++i)
-        if (i->prefix == prefix && i->exactMatch == exactMatch) break;
+    for (; i != iend; ++i) {
+        if (i->prefix == prefix && i->exactMatch == exactMatch) {
+            break;
+        }
+    }
     if (i != iend) {
         LogPrint(BCLog::HTTP,
                  "Unregistering HTTP handler for %s (exactmatch %d)\n", prefix,

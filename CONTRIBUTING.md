@@ -100,7 +100,7 @@ Enter a file in which to save the key (/home/*username*/.ssh/id_rsa): [Press ent
 
 4. Upload your SSH public key to reviews.bitcoinabc.org
 
-  - go to: `https://reviews.bitcoinabc.org/settings/user/*username*/page/ssh/`
+  - Go to: `https://reviews.bitcoinabc.org/settings/user/*username*/page/ssh/`
 
   - Under "SSH Key Actions", Select "Upload Public Key"
 
@@ -124,13 +124,21 @@ Follow instructions provided by `arc install-certificate` to provide your API to
 
 6. Code formatting tools
 
+During submission of patches, arcanist will automatically run `arc lint` to
+enforce Bitcoin ABC code formatting standards, and often suggests changes.
 If code formatting tools do not install automatically on your system, you
-may have to install clang-format-7, autopep8 and flake8. clang-format-7 can be
-installed from https://releases.llvm.org/download.html or https://apt.llvm.org
+will have to install clang-format-7, autopep8, flake8, phpcs and shellcheck.
 
-To install autopep8 and flake8 on Ubuntu:
+To install clang-format-7 on Ubuntu (>= 18.04+updates) or Debian (>= 10):
 ```
-sudo apt-get install python-autopep8 flake8
+sudo apt-get install clang-format-7
+```
+If not available in the distribution, clang-format-7 can be installed from
+https://releases.llvm.org/download.html or https://apt.llvm.org
+
+To install autopep8, flake8 and phpcs on Ubuntu:
+```
+sudo apt-get install python-autopep8 flake8 php-codesniffer shellcheck
 ```
 
 
@@ -174,7 +182,7 @@ as the Diff number, reviewers, etc.).
 
 - When reviewers approve your Diff, it should be listed as "ready to Land"
 in Phabricator. When you want to commit your diff to the repository, check out
-type my-topic-branch in git, then type `arc land`. You have now succesfully
+type my-topic-branch in git, then type `arc land`. You have now successfully
 committed a change to the Bitcoin ABC repository.
 
 - When reviewing a Diff, apply the changeset on your local by using

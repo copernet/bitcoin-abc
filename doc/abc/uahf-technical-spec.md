@@ -177,10 +177,10 @@ of its expiry by itself.
 
 Once the fork has activated, a transaction shall be deemed valid only if
 the following are true in combination:
-- its nHashType has bit 6 set (SIGHASH_FORKID, mask 0x40)
-- a magic 'fork id' value is added to the nHashType before the hash is
+- Its nHashType has bit 6 set (SIGHASH_FORKID, mask 0x40)
+- A magic 'fork id' value is added to the nHashType before the hash is
   calculated (see note 4)
-- it is digested using the new algorithm described in REQ-6-3
+- It is digested using the new algorithm described in REQ-6-3
 
 RATIONALE: To provide strong protection against replay of existing
 transactions on the UAHF chain, only transactions signed with the new
@@ -213,7 +213,7 @@ form of the transaction digest algorithm specified in BIP143.
 
 RATIONALE: see Motivation section of BIP143 [2].
 
-NOTE 1: refer to [3] for the specificaton of the revised transaction
+NOTE 1: refer to [3] for the specification of the revised transaction
 digest based on BIP143. Revisions were made to account for non-Segwit
 deployment.
 
@@ -273,7 +273,7 @@ as "CASH" in user interfaces of some Bitcoin clients (BU, ABC).
 
 [2] https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki#Motivation
 
-[3] [Digest for replay protected signature verification accross hard forks](replay-protected-sighash.md)
+[3] [Digest for replay protected signature verification across hard forks](replay-protected-sighash.md)
 
 [4] https://github.com/Bitcoin-UAHF/spec/blob/master/uahf-test-plan.md
 

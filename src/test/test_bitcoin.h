@@ -11,10 +11,7 @@
 #include <pubkey.h>
 #include <random.h>
 #include <scheduler.h>
-#include <txdb.h>
 #include <txmempool.h>
-
-#include <boost/thread.hpp>
 
 /**
  * Version of Boost::test prior to 1.64 have issues when dealing with nullptr_t.
@@ -25,35 +22,33 @@
  */
 #define NULLPTR(T) static_cast<T *>(nullptr)
 
-extern uint256 insecure_rand_seed;
-extern FastRandomContext insecure_rand_ctx;
+/**
+ * This global and the helpers that use it are not thread-safe.
+ *
+ * If thread-safety is needed, the global could be made thread_local (given
+ * that thread_local is supported on all architectures we support) or a
+ * per-thread instance could be used in the multi-threaded test.
+ */
+extern FastRandomContext g_insecure_rand_ctx;
 
-static inline void SeedInsecureRand(bool fDeterministic = false) {
-    if (fDeterministic) {
-        insecure_rand_seed = uint256();
-    } else {
-        insecure_rand_seed = GetRandHash();
-    }
-    insecure_rand_ctx = FastRandomContext(insecure_rand_seed);
+static inline void SeedInsecureRand(bool deterministic = false) {
+    g_insecure_rand_ctx = FastRandomContext(deterministic);
 }
 
-static inline uint32_t insecure_rand() {
-    return insecure_rand_ctx.rand32();
+static inline uint32_t InsecureRand32() {
+    return g_insecure_rand_ctx.rand32();
 }
 static inline uint256 InsecureRand256() {
-    return insecure_rand_ctx.rand256();
+    return g_insecure_rand_ctx.rand256();
 }
 static inline uint64_t InsecureRandBits(int bits) {
-    return insecure_rand_ctx.randbits(bits);
+    return g_insecure_rand_ctx.randbits(bits);
 }
 static inline uint64_t InsecureRandRange(uint64_t range) {
-    return insecure_rand_ctx.randrange(range);
+    return g_insecure_rand_ctx.randrange(range);
 }
 static inline bool InsecureRandBool() {
-    return insecure_rand_ctx.randbool();
-}
-static inline std::vector<uint8_t> InsecureRandBytes(size_t len) {
-    return insecure_rand_ctx.randbytes(len);
+    return g_insecure_rand_ctx.randbool();
 }
 
 /**
@@ -66,25 +61,24 @@ struct BasicTestingSetup {
     explicit BasicTestingSetup(
         const std::string &chainName = CBaseChainParams::MAIN);
     ~BasicTestingSetup();
+
+    fs::path SetDataDir(const std::string &name);
+
+private:
+    const fs::path m_path_root;
 };
 
-/** Testing setup that configures a complete environment.
+/**
+ * Testing setup that configures a complete environment.
  * Included are data directory, coins database, script check threads setup.
  */
 class CConnman;
 class CNode;
-struct CConnmanTest {
-    static void AddNode(CNode &node);
-    static void ClearNodes();
-};
 
 class PeerLogicValidation;
 struct TestingSetup : public BasicTestingSetup {
-    fs::path pathTemp;
     boost::thread_group threadGroup;
-    CConnman *connman;
     CScheduler scheduler;
-    std::unique_ptr<PeerLogicValidation> peerLogic;
 
     explicit TestingSetup(
         const std::string &chainName = CBaseChainParams::MAIN);
@@ -110,7 +104,7 @@ struct TestChain100Setup : public TestingSetup {
     ~TestChain100Setup();
 
     // For convenience, coinbase transactions.
-    std::vector<CTransaction> coinbaseTxns;
+    std::vector<CTransactionRef> m_coinbase_txns;
     // private/public key needed to spend coinbase transactions.
     CKey coinbaseKey;
 };
@@ -134,7 +128,8 @@ struct TestMemPoolEntryHelper {
 
     CTxMemPoolEntry FromTx(const CMutableTransaction &tx,
                            CTxMemPool *pool = nullptr);
-    CTxMemPoolEntry FromTx(const CTransaction &tx, CTxMemPool *pool = nullptr);
+    CTxMemPoolEntry FromTx(const CTransactionRef &tx,
+                           CTxMemPool *pool = nullptr);
 
     // Change the default value
     TestMemPoolEntryHelper &Fee(Amount _fee) {
@@ -162,4 +157,9 @@ struct TestMemPoolEntryHelper {
         return *this;
     }
 };
-#endif
+
+// define an implicit conversion here so that uint256 may be used directly in
+// BOOST_CHECK_*
+std::ostream &operator<<(std::ostream &os, const uint256 &num);
+
+#endif // BITCOIN_TEST_TEST_BITCOIN_H

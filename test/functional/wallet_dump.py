@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2016 The Bitcoin Core developers
+# Copyright (c) 2016-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the dumpwallet RPC."""
@@ -32,12 +32,12 @@ def read_dump(file_name, addrs, script_addrs, hd_master_addr_old):
                     addr_keypath = comment.split(" addr=")[1]
                     addr = addr_keypath.split(" ")[0]
                     keypath = None
-                    if keytype == "inactivehdmaster=1":
+                    if keytype == "inactivehdseed=1":
                         # ensure the old master is still available
-                        assert(hd_master_addr_old == addr)
-                    elif keytype == "hdmaster=1":
+                        assert hd_master_addr_old == addr
+                    elif keytype == "hdseed=1":
                         # ensure we have generated a new hd master key
-                        assert(hd_master_addr_old != addr)
+                        assert hd_master_addr_old != addr
                         hd_master_addr_ret = addr
                     elif keytype == "script=1":
                         # scripts don't have keypaths
@@ -76,7 +76,7 @@ class WalletDumpTest(BitcoinTestFramework):
         # longer than the default 30 seconds due to an expensive
         # CWallet::TopUpKeyPool call, and the encryptwallet RPC made later in
         # the test often takes even longer.
-        self.add_nodes(self.num_nodes, self.extra_args, timewait=60)
+        self.add_nodes(self.num_nodes, extra_args=self.extra_args, timewait=60)
         self.start_nodes()
 
     def run_test(self):
@@ -87,7 +87,7 @@ class WalletDumpTest(BitcoinTestFramework):
         addrs = []
         for i in range(0, test_addr_count):
             addr = self.nodes[0].getnewaddress()
-            vaddr = self.nodes[0].validateaddress(
+            vaddr = self.nodes[0].getaddressinfo(
                 addr)  # required to get hd keypath
             addrs.append(vaddr)
         # Should be a no-op:
@@ -95,7 +95,7 @@ class WalletDumpTest(BitcoinTestFramework):
 
         # Test scripts dump by adding a 1-of-1 multisig address
         multisig_addr = self.nodes[0].addmultisigaddress(
-            1, [addrs[0]["address"]])
+            1, [addrs[0]["address"]])["address"]
 
         # dump unencrypted wallet
         result = self.nodes[0].dumpwallet(
@@ -141,15 +141,15 @@ class WalletDumpTest(BitcoinTestFramework):
         self.start_node(0, ['-wallet=w2'])
 
         # Make sure the address is not IsMine before import
-        result = self.nodes[0].validateaddress(multisig_addr)
-        assert(result['ismine'] == False)
+        result = self.nodes[0].getaddressinfo(multisig_addr)
+        assert result['ismine'] == False
 
         self.nodes[0].importwallet(os.path.abspath(
             tmpdir + "/node0/wallet.unencrypted.dump"))
 
         # Now check IsMine is true
-        result = self.nodes[0].validateaddress(multisig_addr)
-        assert(result['ismine'] == True)
+        result = self.nodes[0].getaddressinfo(multisig_addr)
+        assert result['ismine'] == True
 
 
 if __name__ == '__main__':

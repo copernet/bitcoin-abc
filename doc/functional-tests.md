@@ -1,6 +1,6 @@
 # Functional tests
 
-The [/ est/](/test/) directory contains integration tests that test bitcoind
+The [/test/](/test/) directory contains integration tests that test bitcoind
 and its utilities in their entirety. It does not contain unit tests, which
 can be found in [/src/test](/src/test), [/src/wallet/test](/src/wallet/test),
 etc.
@@ -28,8 +28,8 @@ you configure. Tests will not run otherwise.
 
 The ZMQ functional test requires a python ZMQ library. To install it:
 
-- on Unix, run `sudo apt-get install python3-zmq`
-- on mac OS, run `pip3 install pyzmq`
+- On Unix, run `sudo apt-get install python3-zmq`
+- On mac OS, run `pip3 install pyzmq`
 
 #### Running the tests
 
@@ -116,11 +116,11 @@ killall bitcoind
 The tests contain logging at different levels (debug, info, warning, etc). By
 default:
 
-- when run through the test_runner harness, *all* logs are written to
+- When run through the test_runner harness, *all* logs are written to
   `test_framework.log` and no logs are output to the console.
-- when run directly, *all* logs are written to `test_framework.log` and INFO
+- When run directly, *all* logs are written to `test_framework.log` and INFO
   level and above are output to the console.
-- when run on Travis, no logs are output to the console. However, if a test
+- When run on Travis, no logs are output to the console. However, if a test
   fails, the `test_framework.log` and bitcoind `debug.log`s will all be dumped
   to the console to help troubleshooting.
 
@@ -156,6 +156,41 @@ import pdb; pdb.set_trace()
 anywhere in the test. You will then be able to inspect variables, as well as
 call methods that interact with the bitcoind nodes-under-test.
 
+If further introspection of the bitcoind instances themselves becomes
+necessary, this can be accomplished by first setting a pdb breakpoint
+at an appropriate location, running the test to that point, then using
+`gdb` to attach to the process and debug.
+
+For instance, to attach to `self.node[1]` during a run:
+
+```bash
+2017-06-27 14:13:56.686000 TestFramework (INFO): Initializing test directory /tmp/user/1000/testo9vsdjo3
+```
+
+use the directory path to get the pid from the pid file:
+
+```bash
+cat /tmp/user/1000/testo9vsdjo3/node1/regtest/bitcoind.pid
+gdb /home/example/bitcoind <pid>
+```
+
+Note: gdb attach step may require `sudo`. To get rid of this, you can run:
+
+```bash
+echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+```
+
+##### Prevent using deprecated features
+
+Python will issue a `DeprecationWarning` when a deprecated feature is
+encountered in a script. By default, this warning message is ignored and not
+displayed to the user. This behavior can be changed by setting the environment
+variable `PYTHONWARNINGS` as follow:
+
+`PYTHONWARNINGS=default::DeprecationWarning`
+
+The warning message will now be printed to the `sys.stderr` output.
+
 ### Util tests
 
 Util tests can be run locally by running `test/util/bitcoin-util-test.py`.
@@ -179,7 +214,7 @@ don't have test cases for.
 #### Style guidelines
 
 - Where possible, try to adhere to
-  [PEP-8 guidelines]([https://www.python.org/dev/peps/pep-0008/)
+  [PEP-8 guidelines](https://www.python.org/dev/peps/pep-0008/)
 - Use a python linter like flake8 before submitting PRs to catch common style
   nits (eg trailing whitespace, unused imports, etc)
 - Avoid wildcard imports where possible
@@ -205,6 +240,11 @@ don't have test cases for.
 - When calling RPCs with lots of arguments, consider using named keyword
   arguments instead of positional arguments to make the intent of the call
   clear to readers.
+- Many of the core test framework classes such as `CBlock` and `CTransaction`
+  don't allow new attributes to be added to their objects at runtime like
+  typical Python objects allow. This helps prevent unpredictable side effects
+  from typographical errors or usage of the objects outside of their intended
+  purpose.
 
 #### RPC and P2P definitions
 
@@ -217,12 +257,12 @@ P2P messages. These can be found in the following source files:
 
 #### Using the P2P interface
 
-- `mininode.py` contains all the definitions for objects that pass
+- `messages.py` contains all the definitions for objects that pass
 over the network (`CBlock`, `CTransaction`, etc, along with the network-level
 wrappers for them, `msg_block`, `msg_tx`, etc).
 
 - P2P tests have two threads. One thread handles all network communication
-with the bitcoind(s) being tested (using python's asyncore package); the other
+with the bitcoind(s) being tested in a callback-based event loop; the other
 implements the test logic.
 
 - `P2PConnection` is the class used to connect to a bitcoind.  `P2PInterface`
@@ -230,58 +270,8 @@ contains the higher level logic for processing P2P payloads and connecting to
 the Bitcoin Core node application logic. For custom behaviour, subclass the
 P2PInterface object and override the callback methods.
 
-- Call `network_thread_start()` after all `P2PInterface` objects are created to
-start the networking thread.  (Continue with the test logic in your existing
-thread.)
-
 - Can be used to write tests where specific P2P protocol behavior is tested.
 Examples tests are `p2p_unrequested_blocks.py`, `p2p_compactblocks.py`.
-
-#### Comptool
-
-- Comptool is a Testing framework for writing tests that compare the block/tx acceptance
-behavior of a bitcoind against 1 or more other bitcoind instances. It should not be used
-to write static tests with known outcomes, since that type of test is easier to write and
-maintain using the standard BitcoinTestFramework.
-
-- Set the `num_nodes` variable (defined in `ComparisonTestFramework`) to start up
-1 or more nodes.  If using 1 node, then `--testbinary` can be used as a command line
-option to change the bitcoind binary used by the test.  If using 2 or more nodes,
-then `--refbinary` can be optionally used to change the bitcoind that will be used
-on nodes 2 and up.
-
-- Implement a (generator) function called `get_tests()` which yields `TestInstance`s.
-Each `TestInstance` consists of:
-  - a list of `[object, outcome, hash]` entries
-    * `object` is a `CBlock`, `CTransaction`, or
-    `CBlockHeader`.  `CBlock`'s and `CTransaction`'s are tested for
-    acceptance.  `CBlockHeader`s can be used so that the test runner can deliver
-    complete headers-chains when requested from the bitcoind, to allow writing
-    tests where blocks can be delivered out of order but still processed by
-    headers-first bitcoind's.
-    * `outcome` is `True`, `False`, or `None`.  If `True`
-    or `False`, the tip is compared with the expected tip -- either the
-    block passed in, or the hash specified as the optional 3rd entry.  If
-    `None` is specified, then the test will compare all the bitcoind's
-    being tested to see if they all agree on what the best tip is.
-    * `hash` is the block hash of the tip to compare against. Optional to
-    specify; if left out then the hash of the block passed in will be used as
-    the expected tip.  This allows for specifying an expected tip while testing
-    the handling of either invalid blocks or blocks delivered out of order,
-    which complete a longer chain.
-  - `sync_every_block`: `True/False`.  If `False`, then all blocks
-    are inv'ed together, and the test runner waits until the node receives the
-    last one, and tests only the last block for tip acceptance using the
-    outcome and specified tip.  If `True`, then each block is tested in
-    sequence and synced (this is slower when processing many blocks).
-  - `sync_every_transaction`: `True/False`.  Analogous to
-    `sync_every_block`, except if the outcome on the last tx is "None",
-    then the contents of the entire mempool are compared across all bitcoind
-    connections.  If `True` or `False`, then only the last tx's
-    acceptance is tested against the given outcome.
-
-- For examples of tests written in this framework, see
-  `p2p_invalid_block.py` and `feature_block.py`.
 
 ### test-framework modules
 
@@ -297,14 +287,8 @@ Generally useful functions.
 #### [test_framework/mininode.py](test_framework/mininode.py)
 Basic code to support P2P connectivity to a bitcoind.
 
-#### [test_framework/comptool.py](test_framework/comptool.py)
-Framework for comparison-tool style, P2P tests.
-
 #### [test_framework/script.py](test_framework/script.py)
 Utilities for manipulating transaction scripts (originally from python-bitcoinlib)
-
-#### [test_framework/blockstore.py](test_framework/blockstore.py)
-Implements disk-backed block and tx storage.
 
 #### [test_framework/key.py](test_framework/key.py)
 Wrapper around OpenSSL EC_Key (originally from python-bitcoinlib)

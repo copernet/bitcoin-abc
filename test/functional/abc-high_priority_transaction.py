@@ -59,8 +59,8 @@ class HighPriorityTransactionTest(BitcoinTestFramework):
         mempool = self.nodes[0].getrawmempool(True)
         # assert that all the txns are in the mempool and that all of them are hi prio
         for i in txids:
-            assert(i in mempool)
-            assert(mempool[i]['currentpriority'] > hiprio_threshold)
+            assert i in mempool
+            assert mempool[i]['currentpriority'] > hiprio_threshold
 
         # mine one block
         self.nodes[0].generate(1)
@@ -70,10 +70,7 @@ class HighPriorityTransactionTest(BitcoinTestFramework):
         assert_equal(self.nodes[0].getmempoolinfo()['bytes'], mempool_size_pre)
 
         # restart with default blockprioritypercentage
-        self.stop_nodes()
-        self.nodes = []
-        self.add_nodes(self.num_nodes, [["-limitfreerelay=2"]])
-        self.start_nodes()
+        self.restart_node(0, ["-limitfreerelay=2"])
 
         # second test step: default reserved prio space in block (100K).
         # the mempool size is about 25K this means that all txns will be
@@ -83,14 +80,14 @@ class HighPriorityTransactionTest(BitcoinTestFramework):
         mempool = self.nodes[0].getrawmempool(True)
         # assert that all the txns are in the mempool and that all of them are hiprio
         for i in txids:
-            assert(i in mempool)
-            assert(mempool[i]['currentpriority'] > hiprio_threshold)
+            assert i in mempool
+            assert mempool[i]['currentpriority'] > hiprio_threshold
 
         # mine one block
         self.nodes[0].generate(1)
 
         self.log.info("Assert that all high prio transactions have been mined")
-        assert(self.nodes[0].getmempoolinfo()['bytes'] == 0)
+        assert self.nodes[0].getmempoolinfo()['bytes'] == 0
 
 
 if __name__ == '__main__':

@@ -25,6 +25,21 @@ struct AvalancheTest {
     static uint64_t getRound(const AvalancheProcessor &p) { return p.round; }
 };
 
+struct CConnmanTest : public CConnman {
+    using CConnman::CConnman;
+    void AddNode(CNode &node) {
+        LOCK(cs_vNodes);
+        vNodes.push_back(&node);
+    }
+    void ClearNodes() {
+        LOCK(cs_vNodes);
+        for (CNode *node : vNodes) {
+            delete node;
+        }
+        vNodes.clear();
+    }
+};
+
 BOOST_FIXTURE_TEST_SUITE(avalanche_tests, TestChain100Setup)
 
 #define REGISTER_VOTE_AND_CHECK(vr, vote, state, finalized, confidence)        \
@@ -157,32 +172,31 @@ CService ip(uint32_t i) {
     return CService(CNetAddr(s), Params().GetDefaultPort());
 }
 
-std::unique_ptr<CNode> ConnectNode(const Config &config, ServiceFlags nServices,
-                                   PeerLogicValidation &peerLogic) {
+CNode *ConnectNode(const Config &config, ServiceFlags nServices,
+                   PeerLogicValidation &peerLogic, CConnmanTest *connman) {
     static NodeId id = 0;
 
     CAddress addr(ip(GetRandInt(0xffffffff)), NODE_NONE);
-    std::unique_ptr<CNode> nodeptr(new CNode(id++, ServiceFlags(NODE_NETWORK),
-                                             0, INVALID_SOCKET, addr, 0, 0,
-                                             CAddress(), "",
-                                             /*fInboundIn=*/false));
-    CNode &node = *nodeptr;
-    node.SetSendVersion(PROTOCOL_VERSION);
-    node.nServices = nServices;
-    peerLogic.InitializeNode(config, &node);
-    node.nVersion = 1;
-    node.fSuccessfullyConnected = true;
+    auto node = new CNode(id++, ServiceFlags(NODE_NETWORK), 0, INVALID_SOCKET,
+                          addr, 0, 0, CAddress(), "",
+                          /*fInboundIn=*/false);
+    node->SetSendVersion(PROTOCOL_VERSION);
+    node->nServices = nServices;
+    peerLogic.InitializeNode(config, node);
+    node->nVersion = 1;
+    node->fSuccessfullyConnected = true;
 
-    CConnmanTest::AddNode(node);
-    return nodeptr;
+    connman->AddNode(*node);
+    return node;
 }
 
-std::array<std::unique_ptr<CNode>, 8>
-ConnectNodes(const Config &config, AvalancheProcessor &p,
-             ServiceFlags nServices, PeerLogicValidation &peerLogic) {
-    std::array<std::unique_ptr<CNode>, 8> nodes;
-    for (auto &n : nodes) {
-        n = ConnectNode(config, nServices, peerLogic);
+std::array<CNode *, 8> ConnectNodes(const Config &config, AvalancheProcessor &p,
+                                    ServiceFlags nServices,
+                                    PeerLogicValidation &peerLogic,
+                                    CConnmanTest *connman) {
+    std::array<CNode *, 8> nodes;
+    for (CNode *&n : nodes) {
+        n = ConnectNode(config, nServices, peerLogic, connman);
         BOOST_CHECK(p.addPeer(n->GetId(), 0));
     }
 
@@ -196,17 +210,22 @@ static AvalancheResponse next(AvalancheResponse &r) {
 }
 
 BOOST_AUTO_TEST_CASE(block_register) {
-    AvalancheProcessor p(g_connman.get());
+    const Config &config = GetConfig();
+
+    auto connman = std::make_unique<CConnmanTest>(config, 0x1337, 0x1337);
+    auto peerLogic = std::make_unique<PeerLogicValidation>(
+        connman.get(), nullptr, scheduler, false);
+
+    AvalancheProcessor p(connman.get());
     std::vector<AvalancheBlockUpdate> updates;
 
     CBlock block = CreateAndProcessBlock({}, CScript());
     const uint256 blockHash = block.GetHash();
     const CBlockIndex *pindex = mapBlockIndex[blockHash];
 
-    const Config &config = GetConfig();
-
     // Create nodes that supports avalanche.
-    auto avanodes = ConnectNodes(config, p, NODE_AVALANCHE, *peerLogic);
+    auto avanodes =
+        ConnectNodes(config, p, NODE_AVALANCHE, *peerLogic, connman.get());
 
     // Querying for random block returns false.
     BOOST_CHECK(!p.isAccepted(pindex));
@@ -351,19 +370,24 @@ BOOST_AUTO_TEST_CASE(block_register) {
     BOOST_CHECK(!p.addBlockToReconcile(pindex));
     BOOST_CHECK(p.isAccepted(pindex));
 
-    CConnmanTest::ClearNodes();
+    connman->ClearNodes();
 }
 
 BOOST_AUTO_TEST_CASE(multi_block_register) {
-    AvalancheProcessor p(g_connman.get());
+    const Config &config = GetConfig();
+
+    auto connman = std::make_unique<CConnmanTest>(config, 0x1337, 0x1337);
+    auto peerLogic = std::make_unique<PeerLogicValidation>(
+        connman.get(), nullptr, scheduler, false);
+
+    AvalancheProcessor p(connman.get());
     CBlockIndex indexA, indexB;
 
     std::vector<AvalancheBlockUpdate> updates;
 
-    const Config &config = GetConfig();
-
     // Create several nodes that support avalanche.
-    auto avanodes = ConnectNodes(config, p, NODE_AVALANCHE, *peerLogic);
+    auto avanodes =
+        ConnectNodes(config, p, NODE_AVALANCHE, *peerLogic, connman.get());
 
     // Make sure the block has a hash.
     CBlock blockA = CreateAndProcessBlock({}, CScript());
@@ -458,11 +482,17 @@ BOOST_AUTO_TEST_CASE(multi_block_register) {
     invs = AvalancheTest::getInvsForNextPoll(p);
     BOOST_CHECK_EQUAL(invs.size(), 0);
 
-    CConnmanTest::ClearNodes();
+    connman->ClearNodes();
 }
 
 BOOST_AUTO_TEST_CASE(poll_and_response) {
-    AvalancheProcessor p(g_connman.get());
+    const Config &config = GetConfig();
+
+    auto connman = std::make_unique<CConnmanTest>(config, 0x1337, 0x1337);
+    auto peerLogic = std::make_unique<PeerLogicValidation>(
+        connman.get(), nullptr, scheduler, false);
+
+    AvalancheProcessor p(connman.get());
 
     std::vector<AvalancheBlockUpdate> updates;
 
@@ -470,14 +500,13 @@ BOOST_AUTO_TEST_CASE(poll_and_response) {
     const uint256 blockHash = block.GetHash();
     const CBlockIndex *pindex = mapBlockIndex[blockHash];
 
-    const Config &config = GetConfig();
-
     // There is no node to query.
     BOOST_CHECK_EQUAL(AvalancheTest::getSuitableNodeToQuery(p), NO_NODE);
 
     // Create a node that supports avalanche and one that doesn't.
-    auto oldnode = ConnectNode(config, NODE_NONE, *peerLogic);
-    auto avanode = ConnectNode(config, NODE_AVALANCHE, *peerLogic);
+    ConnectNode(config, NODE_NONE, *peerLogic, connman.get());
+    auto avanode =
+        ConnectNode(config, NODE_AVALANCHE, *peerLogic, connman.get());
     NodeId avanodeid = avanode->GetId();
     BOOST_CHECK(p.addPeer(avanodeid, 0));
 
@@ -594,11 +623,23 @@ BOOST_AUTO_TEST_CASE(poll_and_response) {
     BOOST_CHECK_EQUAL(updates.size(), 0);
     BOOST_CHECK_EQUAL(AvalancheTest::getSuitableNodeToQuery(p), avanodeid);
 
-    CConnmanTest::ClearNodes();
+    connman->ClearNodes();
 }
 
+#if BOOST_VERSION >= 105900
+BOOST_AUTO_TEST_CASE(poll_inflight_timeout, *boost::unit_test::timeout(60)) {
+#else
+// TODO: Cleanup this branch when boost 1.58 is no longer supported.
 BOOST_AUTO_TEST_CASE(poll_inflight_timeout) {
-    AvalancheProcessor p(g_connman.get());
+    int64_t timeStart = GetTimeMillis();
+#endif
+    const Config &config = GetConfig();
+
+    auto connman = std::make_unique<CConnmanTest>(config, 0x1337, 0x1337);
+    auto peerLogic = std::make_unique<PeerLogicValidation>(
+        connman.get(), nullptr, scheduler, false);
+
+    AvalancheProcessor p(connman.get());
 
     std::vector<AvalancheBlockUpdate> updates;
 
@@ -610,43 +651,64 @@ BOOST_AUTO_TEST_CASE(poll_inflight_timeout) {
     BOOST_CHECK(p.addBlockToReconcile(pindex));
 
     // Create a node that supports avalanche.
-    const Config &config = GetConfig();
-    auto avanode = ConnectNode(config, NODE_AVALANCHE, *peerLogic);
+    auto avanode =
+        ConnectNode(config, NODE_AVALANCHE, *peerLogic, connman.get());
     NodeId avanodeid = avanode->GetId();
     BOOST_CHECK(p.addPeer(avanodeid, 0));
 
     // Expire requests after some time.
-    p.setQueryTimeoutDuration(std::chrono::milliseconds(10));
+    auto queryTimeDuration = std::chrono::milliseconds(10);
+    p.setQueryTimeoutDuration(queryTimeDuration);
     for (int i = 0; i < 10; i++) {
+#if BOOST_VERSION < 105900
+        // TODO: Cleanup this statement when boost 1.58 is no longer supported.
+        BOOST_REQUIRE(timeStart + 60 * 1000 > GetTimeMillis());
+#endif
         AvalancheResponse resp = {
             AvalancheTest::getRound(p), 0, {AvalancheVote(0, blockHash)}};
-        AvalancheTest::runEventLoop(p);
-        // NB: This could wait longer than 1ms in some cases and make the
-        // test flacky. We'll have to come up with a better solution to test
-        // this if that were to be the case. I never was able to trigger this
-        // myself, so it's probably good enough.
-        boost::this_thread::sleep_for(boost::chrono::milliseconds(1));
-        AvalancheTest::runEventLoop(p);
-        BOOST_CHECK(p.registerVotes(avanodeid, next(resp), updates));
 
-        // Now try again but wait.
+        auto start = std::chrono::steady_clock::now();
         AvalancheTest::runEventLoop(p);
-        boost::this_thread::sleep_for(boost::chrono::milliseconds(10));
+        // We cannot guarantee that we'll wait for just 1ms, so we have to bail
+        // if we aren't within the proper time range.
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        AvalancheTest::runEventLoop(p);
+
+        bool ret = p.registerVotes(avanodeid, next(resp), updates);
+        if (std::chrono::steady_clock::now() > start + queryTimeDuration) {
+            // We waited for too long, bail. Because we can't know for sure when
+            // previous steps ran, ret is not deterministic and we do not check
+            // it.
+            i--;
+            continue;
+        }
+
+        // We are within time bounds, so the vote should have worked.
+        BOOST_CHECK(ret);
+
+        // Now try again but wait for expiration.
+        AvalancheTest::runEventLoop(p);
+        std::this_thread::sleep_for(queryTimeDuration);
         AvalancheTest::runEventLoop(p);
         BOOST_CHECK(!p.registerVotes(avanodeid, next(resp), updates));
     }
 
-    CConnmanTest::ClearNodes();
+    connman->ClearNodes();
 }
 
 BOOST_AUTO_TEST_CASE(poll_inflight_count) {
-    AvalancheProcessor p(g_connman.get());
     const Config &config = GetConfig();
 
+    auto connman = std::make_unique<CConnmanTest>(config, 0x1337, 0x1337);
+    auto peerLogic = std::make_unique<PeerLogicValidation>(
+        connman.get(), nullptr, scheduler, false);
+
+    AvalancheProcessor p(connman.get());
+
     // Create enough nodes so that we run into the inflight request limit.
-    std::array<std::unique_ptr<CNode>, AVALANCHE_MAX_INFLIGHT_POLL + 1> nodes;
+    std::array<CNode *, AVALANCHE_MAX_INFLIGHT_POLL + 1> nodes;
     for (auto &n : nodes) {
-        n = ConnectNode(config, NODE_AVALANCHE, *peerLogic);
+        n = ConnectNode(config, NODE_AVALANCHE, *peerLogic, connman.get());
         BOOST_CHECK(p.addPeer(n->GetId(), 0));
     }
 
@@ -690,21 +752,26 @@ BOOST_AUTO_TEST_CASE(poll_inflight_count) {
     BOOST_CHECK_EQUAL(invs[0].type, MSG_BLOCK);
     BOOST_CHECK(invs[0].hash == blockHash);
 
-    CConnmanTest::ClearNodes();
+    connman->ClearNodes();
 }
 
 BOOST_AUTO_TEST_CASE(quorum_diversity) {
-    AvalancheProcessor p(g_connman.get());
+    const Config &config = GetConfig();
+
+    auto connman = std::make_unique<CConnmanTest>(config, 0x1337, 0x1337);
+    auto peerLogic = std::make_unique<PeerLogicValidation>(
+        connman.get(), nullptr, scheduler, false);
+
+    AvalancheProcessor p(connman.get());
     std::vector<AvalancheBlockUpdate> updates;
 
     CBlock block = CreateAndProcessBlock({}, CScript());
     const uint256 blockHash = block.GetHash();
     const CBlockIndex *pindex = mapBlockIndex[blockHash];
 
-    const Config &config = GetConfig();
-
     // Create nodes that supports avalanche.
-    auto avanodes = ConnectNodes(config, p, NODE_AVALANCHE, *peerLogic);
+    auto avanodes =
+        ConnectNodes(config, p, NODE_AVALANCHE, *peerLogic, connman.get());
 
     // Querying for random block returns false.
     BOOST_CHECK(!p.isAccepted(pindex));
@@ -757,11 +824,17 @@ BOOST_AUTO_TEST_CASE(quorum_diversity) {
         firstNodeId, {round, 0, {AvalancheVote(0, blockHash)}}, updates));
     BOOST_CHECK_EQUAL(p.getConfidence(pindex), confidence + 1);
 
-    CConnmanTest::ClearNodes();
+    connman->ClearNodes();
 }
 
 BOOST_AUTO_TEST_CASE(event_loop) {
-    AvalancheProcessor p(g_connman.get());
+    const Config &config = GetConfig();
+
+    auto connman = std::make_unique<CConnmanTest>(config, 0x1337, 0x1337);
+    auto peerLogic = std::make_unique<PeerLogicValidation>(
+        connman.get(), nullptr, scheduler, false);
+
+    AvalancheProcessor p(connman.get());
     CScheduler s;
 
     CBlock block = CreateAndProcessBlock({}, CScript());
@@ -781,11 +854,9 @@ BOOST_AUTO_TEST_CASE(event_loop) {
     // Start the scheduler thread.
     std::thread schedulerThread(std::bind(&CScheduler::serviceQueue, &s));
 
-    // Create a node and a block to query.
-    const Config &config = GetConfig();
-
     // Create a node that supports avalanche.
-    auto avanode = ConnectNode(config, NODE_AVALANCHE, *peerLogic);
+    auto avanode =
+        ConnectNode(config, NODE_AVALANCHE, *peerLogic, connman.get());
     NodeId nodeid = avanode->GetId();
     BOOST_CHECK(p.addPeer(nodeid, 0));
 
@@ -796,9 +867,9 @@ BOOST_AUTO_TEST_CASE(event_loop) {
     uint64_t queryRound = AvalancheTest::getRound(p);
     BOOST_CHECK(p.addBlockToReconcile(pindex));
 
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < 60 * 1000; i++) {
         // Technically, this is a race condition, but this should do just fine
-        // as we wait up to 1s for an event that should take 10ms.
+        // as we wait up to 1 minute for an event that should take 10ms.
         boost::this_thread::sleep_for(boost::chrono::milliseconds(1));
         if (AvalancheTest::getRound(p) != queryRound) {
             break;
@@ -841,7 +912,7 @@ BOOST_AUTO_TEST_CASE(event_loop) {
     s.stop(true);
     schedulerThread.join();
 
-    CConnmanTest::ClearNodes();
+    connman->ClearNodes();
 }
 
 BOOST_AUTO_TEST_CASE(destructor) {

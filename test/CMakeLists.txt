@@ -24,7 +24,7 @@ configure_file(config.ini.in config.ini @ONLY)
 
 ###
 # Setup symlinks for testing
-### 
+###
 macro(make_link src dest)
   add_custom_command(
     OUTPUT "${dest}"
@@ -49,9 +49,14 @@ make_link(
 	${CMAKE_CURRENT_SOURCE_DIR}/util/bitcoin-util-test.py
 	${CMAKE_CURRENT_BINARY_DIR}/util/bitcoin-util-test.py
 )
+make_link(
+	${CMAKE_CURRENT_SOURCE_DIR}/util/rpcauth-test.py
+	${CMAKE_CURRENT_BINARY_DIR}/util/rpcauth-test.py
+)
 
 add_custom_target(check-functional
 	COMMAND
+		"${PYTHON_EXECUTABLE}"
 		./functional/test_runner.py
 	DEPENDS
 		../src/bitcoind
@@ -67,6 +72,7 @@ if(BUILD_BITCOIN_TX)
 		COMMAND
 			${CMAKE_COMMAND} -E echo "Running test/util/bitcoin-util-test.py..."
 		COMMAND
+			"${PYTHON_EXECUTABLE}"
 			./util/bitcoin-util-test.py
 		DEPENDS
 			../src/bitcoin-tx
@@ -75,3 +81,23 @@ if(BUILD_BITCOIN_TX)
 
 	add_dependencies(check check-bitcoin-util)
 endif()
+
+add_custom_target(check-rpcauth
+	COMMAND
+		${CMAKE_COMMAND} -E echo "Running test/util/rpcauth-test.py..."
+	COMMAND
+		"${PYTHON_EXECUTABLE}"
+		./util/rpcauth-test.py
+	DEPENDS
+		${CMAKE_CURRENT_BINARY_DIR}/util/rpcauth-test.py
+)
+
+add_dependencies(check check-rpcauth)
+
+include(PackageHelper)
+exclude_from_source_package(
+	# Subdirectories
+	"cache/"
+	"lint/"
+	"sanitizer_suppressions/"
+)

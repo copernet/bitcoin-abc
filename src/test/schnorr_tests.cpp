@@ -38,21 +38,21 @@ struct KeyData {
 static void CheckError(uint32_t flags, const stacktype &original_stack,
                        const CScript &script, ScriptError expected) {
     BaseSignatureChecker sigchecker;
-    ScriptError err = SCRIPT_ERR_OK;
+    ScriptError err = ScriptError::OK;
     stacktype stack{original_stack};
     bool r = EvalScript(stack, script, flags, sigchecker, &err);
     BOOST_CHECK(!r);
-    BOOST_CHECK_EQUAL(err, expected);
+    BOOST_CHECK(err == expected);
 }
 
 static void CheckPass(uint32_t flags, const stacktype &original_stack,
                       const CScript &script, const stacktype &expected) {
     BaseSignatureChecker sigchecker;
-    ScriptError err = SCRIPT_ERR_OK;
+    ScriptError err = ScriptError::OK;
     stacktype stack{original_stack};
     bool r = EvalScript(stack, script, flags, sigchecker, &err);
     BOOST_CHECK(r);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+    BOOST_CHECK(err == ScriptError::OK);
     BOOST_CHECK(stack == expected);
 }
 
@@ -68,7 +68,7 @@ BOOST_AUTO_TEST_CASE(opcodes_random_flags) {
     valtype pubkeyC = ToByteVector(kd.pubkeyC);
 
     // Script endings. The non-verify variants will complete OK and the verify
-    // variant will complete with SCRIPT_ERR_<opcodename>, that is, unless
+    // variant will complete with ScriptError::<opcodename>, that is, unless
     // there is a flag-dependent error which we will be testing for.
     const CScript scriptCHECKSIG = CScript()
                                    << OP_CHECKSIG << OP_NOT << OP_VERIFY;
@@ -102,13 +102,9 @@ BOOST_AUTO_TEST_CASE(opcodes_random_flags) {
     // The first lcg.next() call is still 0x00000000 though.
     MMIXLinearCongruentialGenerator lcg(1234);
     for (int i = 0; i < 4096; i++) {
-        uint32_t flags = lcg.next() | SCRIPT_ENABLE_CHECKDATASIG;
+        uint32_t flags = lcg.next();
 
         const bool hasForkId = (flags & SCRIPT_ENABLE_SIGHASH_FORKID) != 0;
-        const bool hasSchnorr = (flags & SCRIPT_ENABLE_SCHNORR) != 0;
-        const bool hasStricts =
-            (flags & (SCRIPT_VERIFY_DERSIG | SCRIPT_VERIFY_LOW_S |
-                      SCRIPT_VERIFY_STRICTENC)) != 0;
         const bool hasNullFail = (flags & SCRIPT_VERIFY_NULLFAIL) != 0;
 
         // Prepare 65-byte transaction sigs with right hashtype byte.
@@ -119,102 +115,56 @@ BOOST_AUTO_TEST_CASE(opcodes_random_flags) {
 
         // Test CHECKSIG & CHECKDATASIG with he non-DER sig, which can fail from
         // encoding, otherwise upon verification.
-        if (hasStricts && !hasSchnorr) {
+        if (hasNullFail) {
             CheckError(flags, {Zero64_with_hashtype, pubkeyC}, scriptCHECKSIG,
-                       SCRIPT_ERR_SIG_DER);
+                       ScriptError::SIG_NULLFAIL);
             CheckError(flags, {Zero64_with_hashtype, pubkeyC},
-                       scriptCHECKSIGVERIFY, SCRIPT_ERR_SIG_DER);
+                       scriptCHECKSIGVERIFY, ScriptError::SIG_NULLFAIL);
             CheckError(flags, {Zero64, {}, pubkeyC}, scriptCHECKDATASIG,
-                       SCRIPT_ERR_SIG_DER);
+                       ScriptError::SIG_NULLFAIL);
             CheckError(flags, {Zero64, {}, pubkeyC}, scriptCHECKDATASIGVERIFY,
-                       SCRIPT_ERR_SIG_DER);
-        } else if (hasNullFail) {
-            CheckError(flags, {Zero64_with_hashtype, pubkeyC}, scriptCHECKSIG,
-                       SCRIPT_ERR_SIG_NULLFAIL);
-            CheckError(flags, {Zero64_with_hashtype, pubkeyC},
-                       scriptCHECKSIGVERIFY, SCRIPT_ERR_SIG_NULLFAIL);
-            CheckError(flags, {Zero64, {}, pubkeyC}, scriptCHECKDATASIG,
-                       SCRIPT_ERR_SIG_NULLFAIL);
-            CheckError(flags, {Zero64, {}, pubkeyC}, scriptCHECKDATASIGVERIFY,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
         } else {
             CheckPass(flags, {Zero64_with_hashtype, pubkeyC}, scriptCHECKSIG,
                       {});
             CheckError(flags, {Zero64_with_hashtype, pubkeyC},
-                       scriptCHECKSIGVERIFY, SCRIPT_ERR_CHECKSIGVERIFY);
+                       scriptCHECKSIGVERIFY, ScriptError::CHECKSIGVERIFY);
             CheckPass(flags, {Zero64, {}, pubkeyC}, scriptCHECKDATASIG, {});
             CheckError(flags, {Zero64, {}, pubkeyC}, scriptCHECKDATASIGVERIFY,
-                       SCRIPT_ERR_CHECKDATASIGVERIFY);
+                       ScriptError::CHECKDATASIGVERIFY);
         }
 
         // Test CHECKSIG & CHECKDATASIG with DER sig, which fails upon
         // verification.
         if (hasNullFail) {
             CheckError(flags, {DER64_with_hashtype, pubkeyC}, scriptCHECKSIG,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
             CheckError(flags, {DER64_with_hashtype, pubkeyC},
-                       scriptCHECKSIGVERIFY, SCRIPT_ERR_SIG_NULLFAIL);
+                       scriptCHECKSIGVERIFY, ScriptError::SIG_NULLFAIL);
             CheckError(flags, {DER64, {}, pubkeyC}, scriptCHECKDATASIG,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
             CheckError(flags, {DER64, {}, pubkeyC}, scriptCHECKDATASIGVERIFY,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
         } else {
             CheckPass(flags, {DER64_with_hashtype, pubkeyC}, scriptCHECKSIG,
                       {});
             CheckError(flags, {DER64_with_hashtype, pubkeyC},
-                       scriptCHECKSIGVERIFY, SCRIPT_ERR_CHECKSIGVERIFY);
+                       scriptCHECKSIGVERIFY, ScriptError::CHECKSIGVERIFY);
             CheckPass(flags, {DER64, {}, pubkeyC}, scriptCHECKDATASIG, {});
             CheckError(flags, {DER64, {}, pubkeyC}, scriptCHECKDATASIGVERIFY,
-                       SCRIPT_ERR_CHECKDATASIGVERIFY);
+                       ScriptError::CHECKDATASIGVERIFY);
         }
 
         // test OP_CHECKMULTISIG/VERIFY
-        if (hasSchnorr) {
-            // When Schnorr flag is on, we always fail with BADLENGTH no matter
-            // what.
-            CheckError(flags, {{}, Zero64_with_hashtype, {1}, pubkeyC, {1}},
-                       scriptCHECKMULTISIG, SCRIPT_ERR_SIG_BADLENGTH);
-            CheckError(flags, {{}, Zero64_with_hashtype, {1}, pubkeyC, {1}},
-                       scriptCHECKMULTISIGVERIFY, SCRIPT_ERR_SIG_BADLENGTH);
-            CheckError(flags, {{}, DER64_with_hashtype, {1}, pubkeyC, {1}},
-                       scriptCHECKMULTISIG, SCRIPT_ERR_SIG_BADLENGTH);
-            CheckError(flags, {{}, DER64_with_hashtype, {1}, pubkeyC, {1}},
-                       scriptCHECKMULTISIGVERIFY, SCRIPT_ERR_SIG_BADLENGTH);
-        } else {
-            // Otherwise, the failure depends on signature content.
-            // The non-DER sig can fail from encoding, otherwise upon
-            // verification.
-            if (hasStricts) {
-                CheckError(flags, {{}, Zero64_with_hashtype, {1}, pubkeyC, {1}},
-                           scriptCHECKMULTISIG, SCRIPT_ERR_SIG_DER);
-                CheckError(flags, {{}, Zero64_with_hashtype, {1}, pubkeyC, {1}},
-                           scriptCHECKMULTISIGVERIFY, SCRIPT_ERR_SIG_DER);
-            } else if (hasNullFail) {
-                CheckError(flags, {{}, Zero64_with_hashtype, {1}, pubkeyC, {1}},
-                           scriptCHECKMULTISIG, SCRIPT_ERR_SIG_NULLFAIL);
-                CheckError(flags, {{}, Zero64_with_hashtype, {1}, pubkeyC, {1}},
-                           scriptCHECKMULTISIGVERIFY, SCRIPT_ERR_SIG_NULLFAIL);
-            } else {
-                CheckPass(flags, {{}, Zero64_with_hashtype, {1}, pubkeyC, {1}},
-                          scriptCHECKMULTISIG, {});
-                CheckError(flags, {{}, Zero64_with_hashtype, {1}, pubkeyC, {1}},
-                           scriptCHECKMULTISIGVERIFY,
-                           SCRIPT_ERR_CHECKMULTISIGVERIFY);
-            }
-            // The DER sig fails upon verification.
-            if (hasNullFail) {
-                CheckError(flags, {{}, DER64_with_hashtype, {1}, pubkeyC, {1}},
-                           scriptCHECKMULTISIG, SCRIPT_ERR_SIG_NULLFAIL);
-                CheckError(flags, {{}, DER64_with_hashtype, {1}, pubkeyC, {1}},
-                           scriptCHECKMULTISIGVERIFY, SCRIPT_ERR_SIG_NULLFAIL);
-            } else {
-                CheckPass(flags, {{}, DER64_with_hashtype, {1}, pubkeyC, {1}},
-                          scriptCHECKMULTISIG, {});
-                CheckError(flags, {{}, DER64_with_hashtype, {1}, pubkeyC, {1}},
-                           scriptCHECKMULTISIGVERIFY,
-                           SCRIPT_ERR_CHECKMULTISIGVERIFY);
-            }
-        }
+        // We fail with BADLENGTH no matter what.
+        CheckError(flags, {{}, Zero64_with_hashtype, {1}, pubkeyC, {1}},
+                   scriptCHECKMULTISIG, ScriptError::SIG_BADLENGTH);
+        CheckError(flags, {{}, Zero64_with_hashtype, {1}, pubkeyC, {1}},
+                   scriptCHECKMULTISIGVERIFY, ScriptError::SIG_BADLENGTH);
+        CheckError(flags, {{}, DER64_with_hashtype, {1}, pubkeyC, {1}},
+                   scriptCHECKMULTISIG, ScriptError::SIG_BADLENGTH);
+        CheckError(flags, {{}, DER64_with_hashtype, {1}, pubkeyC, {1}},
+                   scriptCHECKMULTISIGVERIFY, ScriptError::SIG_BADLENGTH);
     }
 }
 

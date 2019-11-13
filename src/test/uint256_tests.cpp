@@ -4,6 +4,7 @@
 #include <uint256.h>
 
 #include <arith_uint256.h>
+#include <streams.h>
 #include <version.h>
 
 #include <test/test_bitcoin.h>
@@ -52,7 +53,7 @@ const uint8_t MaxArray[] =
 const uint256 MaxL = uint256(std::vector<uint8_t>(MaxArray, MaxArray + 32));
 const uint160 MaxS = uint160(std::vector<uint8_t>(MaxArray, MaxArray + 20));
 
-std::string ArrayToString(const uint8_t A[], unsigned int width) {
+static std::string ArrayToString(const uint8_t A[], unsigned int width) {
     std::stringstream Stream;
     Stream << std::hex;
     for (unsigned int i = 0; i < width; ++i) {
@@ -277,6 +278,18 @@ BOOST_AUTO_TEST_CASE(conversion) {
     BOOST_CHECK(arith_uint256(R2L.GetHex()) == UintToArith256(R2L));
     BOOST_CHECK(R1L.GetHex() == UintToArith256(R1L).GetHex());
     BOOST_CHECK(R2L.GetHex() == UintToArith256(R2L).GetHex());
+}
+
+BOOST_AUTO_TEST_CASE(operator_with_self) {
+    arith_uint256 v = UintToArith256(uint256S("02"));
+    v *= v;
+    BOOST_CHECK(v == UintToArith256(uint256S("04")));
+    v /= v;
+    BOOST_CHECK(v == UintToArith256(uint256S("01")));
+    v += v;
+    BOOST_CHECK(v == UintToArith256(uint256S("02")));
+    v -= v;
+    BOOST_CHECK(v == UintToArith256(uint256S("0")));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

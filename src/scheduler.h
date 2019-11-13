@@ -26,8 +26,7 @@
 // CScheduler* s = new CScheduler();
 // s->scheduleFromNow(doSomething, 11); // Assuming a: void doSomething() { }
 // s->scheduleFromNow(std::bind(Class::func, this, argument), 3);
-// boost::thread* t = new boost::thread(boost::bind(CScheduler::serviceQueue,
-// s));
+// boost::thread* t = new boost::thread(std::bind(CScheduler::serviceQueue, s));
 //
 // ... then at program shutdown, clean up the thread running serviceQueue:
 // t->interrupt();
@@ -41,8 +40,8 @@ public:
     CScheduler();
     ~CScheduler();
 
-    typedef std::function<void(void)> Function;
-    typedef std::function<bool(void)> Predicate;
+    typedef std::function<void()> Function;
+    typedef std::function<bool()> Predicate;
 
     // Call func at/after time t
     void schedule(Function f, boost::chrono::system_clock::time_point t =
@@ -51,10 +50,11 @@ public:
     // Convenience method: call f once deltaMilliSeconds from now
     void scheduleFromNow(Function f, int64_t deltaMilliSeconds);
 
-    // Another convenience method: call f approximately every deltaMilliSeconds
-    // forever, starting deltaMilliSeconds from now. To be more precise: every
-    // time f is finished, it is rescheduled to run deltaMilliSeconds later. If
-    // you need more accurate scheduling, don't use this method.
+    // Another convenience method: call p approximately every deltaMilliSeconds
+    // forever, starting deltaMilliSeconds from now untill p returns false. To
+    // be more precise: every time p is finished, it is rescheduled to run
+    // deltaMilliSeconds later. If you need more accurate scheduling, don't use
+    // this method.
     void scheduleEvery(Predicate p, int64_t deltaMilliSeconds);
 
     // To keep things as simple as possible, there is no unschedule.
@@ -90,17 +90,22 @@ private:
 
 /**
  * Class used by CScheduler clients which may schedule multiple jobs
- * which are required to be run serially. Does not require such jobs
- * to be executed on the same thread, but no two jobs will be executed
- * at the same time.
+ * which are required to be run serially. Jobs may not be run on the
+ * same thread, but no two jobs will be executed
+ * at the same time and memory will be release-acquire consistent
+ * (the scheduler will internally do an acquire before invoking a callback
+ * as well as a release at the end). In practice this means that a callback
+ * B() will be able to observe all of the effects of callback A() which executed
+ * before it.
  */
 class SingleThreadedSchedulerClient {
 private:
     CScheduler *m_pscheduler;
 
     CCriticalSection m_cs_callbacks_pending;
-    std::list<std::function<void(void)>> m_callbacks_pending;
-    bool m_are_callbacks_running = false;
+    std::list<std::function<void()>>
+        m_callbacks_pending GUARDED_BY(m_cs_callbacks_pending);
+    bool m_are_callbacks_running GUARDED_BY(m_cs_callbacks_pending) = false;
 
     void MaybeScheduleProcessQueue();
     void ProcessQueue();
@@ -108,14 +113,21 @@ private:
 public:
     explicit SingleThreadedSchedulerClient(CScheduler *pschedulerIn)
         : m_pscheduler(pschedulerIn) {}
-    void AddToProcessQueue(std::function<void(void)> func);
+
+    /**
+     * Add a callback to be executed. Callbacks are executed serially
+     * and memory is release-acquire consistent between callback executions.
+     * Practially, this means that callbacks can behave as if they are executed
+     * in order by a single thread.
+     */
+    void AddToProcessQueue(std::function<void()> func);
 
     // Processes all remaining queue members on the calling thread, blocking
-    // until queue is empty
-    // Must be called after the CScheduler has no remaining processing threads!
+    // until queue is empty. Must be called after the CScheduler has no
+    // remaining processing threads!
     void EmptyQueue();
 
     size_t CallbacksPending();
 };
 
-#endif
+#endif // BITCOIN_SCHEDULER_H

@@ -9,10 +9,13 @@
 #include <vector>
 #include "primitives/transaction.h"
 
+struct Amount;
 class CBlock;
+class CBlockHeader;
 class CMutableTransaction;
 class CScript;
 class CTransaction;
+struct PartiallySignedTransaction;
 class uint256;
 class UniValue;
 
@@ -22,16 +25,21 @@ std::string ScriptToAsmStr(const CScript &script,
                            const bool fAttemptSighashDecode = false);
 bool DecodeHexTx(CMutableTransaction &tx, const std::string &strHexTx);
 bool DecodeHexBlk(CBlock &, const std::string &strHexBlk);
-uint256 ParseHashUV(const UniValue &v, const std::string &strName);
+bool DecodeHexBlockHeader(CBlockHeader &, const std::string &hex_header);
 uint256 ParseHashStr(const std::string &, const std::string &strName);
 std::vector<uint8_t> ParseHexUV(const UniValue &v, const std::string &strName);
+bool DecodePSBT(PartiallySignedTransaction &psbt, const std::string &base64_tx,
+                std::string &error);
 
 // core_write.cpp
+UniValue ValueFromAmount(const Amount &amount);
 std::string FormatScript(const CScript &script);
 std::string EncodeHexTx(const CTransactionRef &txRef, const int serialFlags = 0);
 std::string EncodeHexTx(const CTransaction &tx, const int serializeFlags = 0);
+std::string SighashToStr(uint8_t sighash_type);
 void ScriptPubKeyToUniv(const CScript &scriptPubKey, UniValue &out,
                         bool fIncludeHex);
+void ScriptToUniv(const CScript &script, UniValue &out, bool include_address);
 void TxToUniv(const CTransaction &tx, const uint256 &hashBlock, UniValue &entry,
               bool include_hex = true, int serialize_flags = 0);
 

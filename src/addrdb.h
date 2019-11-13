@@ -38,6 +38,11 @@ public:
         nCreateTime = nCreateTimeIn;
     }
 
+    explicit CBanEntry(int64_t n_create_time_in, BanReason ban_reason_in)
+        : CBanEntry(n_create_time_in) {
+        banReason = ban_reason_in;
+    }
+
     ADD_SERIALIZE_METHODS;
 
     template <typename Stream, typename Operation>
@@ -85,11 +90,11 @@ public:
 /** Access to the banlist database (banlist.dat) */
 class CBanDB {
 private:
-    fs::path pathBanlist;
+    const fs::path m_ban_list_path;
     const CChainParams &chainParams;
 
 public:
-    CBanDB(const CChainParams &chainParams);
+    CBanDB(fs::path ban_list_path, const CChainParams &_chainParams);
     bool Write(const banmap_t &banSet);
     bool Read(banmap_t &banSet);
 };

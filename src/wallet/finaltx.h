@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_DEPRECATED_FINALTX_H
-#define BITCOIN_DEPRECATED_FINALTX_H
+#ifndef BITCOIN_WALLET_FINALTX_H
+#define BITCOIN_WALLET_FINALTX_H
 
 class CTransaction;
 
@@ -12,6 +12,7 @@ class CTransaction;
  * from it, it is still provided in this header file. Or maybe we'll just
  * blackhole the wallet at some point.
  */
-bool CheckFinalTx(const CTransaction &tx, int flags = -1);
+bool CheckFinalTx(const CTransaction &tx, int flags = -1)
+    EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
-#endif // BITCOIN_DEPRECATED_FINALTX_H
+#endif // BITCOIN_WALLET_FINALTX_H

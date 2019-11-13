@@ -8,14 +8,14 @@
  descendants as abandoned which allows their inputs to be respent. It can be
  used to replace "stuck" or evicted transactions. It only works on transactions
  which are not included in a block and are not currently in the mempool. It has
- no effect on transactions which are already conflicted or abandoned.
+ no effect on transactions which are already abandoned.
 """
 from decimal import Decimal
 
-from test_framework.messages import CTransaction, FromHex
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
+    assert_raises_rpc_error,
     connect_nodes,
     disconnect_nodes,
     satoshi_round,
@@ -33,8 +33,6 @@ class AbandonConflictTest(BitcoinTestFramework):
         def total_fees(*txids):
             total = 0
             for txid in txids:
-                ctx = FromHex(CTransaction(),
-                              self.nodes[0].getrawtransaction(txid))
                 total += self.nodes[0].calculate_fee_from_txid(txid)
 
             return satoshi_round(total)
@@ -50,11 +48,19 @@ class AbandonConflictTest(BitcoinTestFramework):
 
         sync_mempools(self.nodes)
         self.nodes[1].generate(1)
+
+        # Can not abandon non-wallet transaction
+        assert_raises_rpc_error(-5, 'Invalid or non-wallet transaction id',
+                                lambda: self.nodes[0].abandontransaction(txid='ff' * 32))
+        # Can not abandon confirmed transaction
+        assert_raises_rpc_error(-5, 'Transaction not eligible for abandonment',
+                                lambda: self.nodes[0].abandontransaction(txid=txA))
+
         sync_blocks(self.nodes)
         newbalance = self.nodes[0].getbalance()
 
         # no more than fees lost
-        assert(balance - newbalance <= total_fees(txA, txB, txC))
+        assert balance - newbalance <= total_fees(txA, txB, txC)
         balance = newbalance
 
         # Disconnect nodes so node0's transactions don't get into node1's mempool
@@ -131,8 +137,8 @@ class AbandonConflictTest(BitcoinTestFramework):
         assert_equal(unconfbalance, newbalance)
         # Unconfirmed transactions which are not in the mempool should also
         # not be in listunspent
-        assert(not txABC2 in [utxo["txid"]
-                              for utxo in self.nodes[0].listunspent(0)])
+        assert not txABC2 in [utxo["txid"]
+                              for utxo in self.nodes[0].listunspent(0)]
         balance = newbalance
 
         # Abandon original transaction and verify inputs are available again
@@ -149,7 +155,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         assert_equal(len(self.nodes[0].getrawmempool()), 0)
         assert_equal(self.nodes[0].getbalance(), balance)
 
-        # If the transaction is re-sent the wallet also unabandons it.   The
+        # If the transaction is re-sent the wallet also unabandons it. The
         # change should be available, and it's child transaction should remain
         # abandoned.
         # NOTE: Abandoned transactions are internal to the wallet, and tracked
@@ -159,7 +165,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         assert_equal(newbalance, balance - Decimal("20") + Decimal("14.99998"))
         balance = newbalance
 
-        # Send child tx again so it is not longer abandoned.
+        # Send child tx again so it is no longer abandoned.
         self.nodes[0].sendrawtransaction(signed2["hex"])
         newbalance = self.nodes[0].getbalance()
         assert_equal(newbalance, balance - Decimal("10") -
@@ -188,13 +194,13 @@ class AbandonConflictTest(BitcoinTestFramework):
         connect_nodes(self.nodes[0], self.nodes[1])
         sync_blocks(self.nodes)
 
-        # Verify that B and C's 10 BTC outputs are available for spending again because AB1 is now conflicted
+        # Verify that B and C's 10 BCH outputs are available for spending again because AB1 is now conflicted
         newbalance = self.nodes[0].getbalance()
         assert_equal(newbalance, balance + Decimal("20"))
         balance = newbalance
 
         # There is currently a minor bug around this and so this test doesn't work.  See Issue #7315
-        # Invalidate the block with the double spend and B's 10 BTC output should no longer be available
+        # Invalidate the block with the double spend and B's 10 BCH output should no longer be available
         # Don't think C's should either
         self.nodes[0].invalidateblock(self.nodes[0].getbestblockhash())
         newbalance = self.nodes[0].getbalance()

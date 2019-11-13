@@ -1,4 +1,5 @@
 // Copyright (c) 2015-2016 The Bitcoin Core developers
+// Copyright (c) 2017 The Zcash developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,14 +8,13 @@
 #include <crypto/hmac_sha256.h>
 #include <net.h>
 #include <netbase.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/split.hpp>
-#include <boost/bind.hpp>
 #include <boost/signals2/signal.hpp>
 
 #include <event2/buffer.h>
@@ -97,7 +97,7 @@ public:
     /**
      * Disconnect from Tor control port.
      */
-    bool Disconnect();
+    void Disconnect();
 
     /**
      * Send a command, register a handler for the reply.
@@ -243,12 +243,11 @@ bool TorControlConnection::Connect(const std::string &target,
     return true;
 }
 
-bool TorControlConnection::Disconnect() {
+void TorControlConnection::Disconnect() {
     if (b_conn) {
         bufferevent_free(b_conn);
     }
     b_conn = nullptr;
-    return true;
 }
 
 bool TorControlConnection::Command(const std::string &cmd,
@@ -270,9 +269,10 @@ bool TorControlConnection::Command(const std::string &cmd,
 
 /* Split reply line in the form 'AUTH METHODS=...' into a type
  * 'AUTH' and arguments 'METHODS=...'.
+ * Grammar is implicitly defined in https://spec.torproject.org/control-spec by
+ * the server reply formats for PROTOCOLINFO (S3.21) and AUTHCHALLENGE (S3.24).
  */
-static std::pair<std::string, std::string>
-SplitTorReplyLine(const std::string &s) {
+std::pair<std::string, std::string> SplitTorReplyLine(const std::string &s) {
     size_t ptr = 0;
     std::string type;
     while (ptr < s.size() && s[ptr] != ' ') {
@@ -289,14 +289,17 @@ SplitTorReplyLine(const std::string &s) {
 /**
  * Parse reply arguments in the form 'METHODS=COOKIE,SAFECOOKIE
  * COOKIEFILE=".../control_auth_cookie"'.
+ * Returns a map of keys to values, or an empty map if there was an error.
+ * Grammar is implicitly defined in https://spec.torproject.org/control-spec by
+ * the server reply formats for PROTOCOLINFO (S3.21), AUTHCHALLENGE (S3.24),
+ * and ADD_ONION (S3.27). See also sections 2.1 and 2.3.
  */
-static std::map<std::string, std::string>
-ParseTorReplyMapping(const std::string &s) {
+std::map<std::string, std::string> ParseTorReplyMapping(const std::string &s) {
     std::map<std::string, std::string> mapping;
     size_t ptr = 0;
     while (ptr < s.size()) {
         std::string key, value;
-        while (ptr < s.size() && s[ptr] != '=') {
+        while (ptr < s.size() && s[ptr] != '=' && s[ptr] != ' ') {
             key.push_back(s[ptr]);
             ++ptr;
         }
@@ -304,15 +307,20 @@ ParseTorReplyMapping(const std::string &s) {
         if (ptr == s.size()) {
             return std::map<std::string, std::string>();
         }
+        // The remaining string is an OptArguments
+        if (s[ptr] == ' ') {
+            break;
+        }
         // skip '='
         ++ptr;
         // Quoted string
         if (ptr < s.size() && s[ptr] == '"') {
-            // skip '='
+            // skip opening '"'
             ++ptr;
             bool escape_next = false;
-            while (ptr < s.size() && (!escape_next && s[ptr] != '"')) {
-                escape_next = (s[ptr] == '\\');
+            while (ptr < s.size() && (escape_next || s[ptr] != '"')) {
+                // Repeated backslashes must be interpreted as pairs
+                escape_next = (s[ptr] == '\\' && !escape_next);
                 value.push_back(s[ptr]);
                 ++ptr;
             }
@@ -322,10 +330,59 @@ ParseTorReplyMapping(const std::string &s) {
             }
             // skip closing '"'
             ++ptr;
-            /* TODO: unescape value - according to the spec this depends on the
-             * context, some strings use C-LogPrintf style escape codes, some
-             * don't. So may be better handled at the call site.
+            /**
+             * Unescape value. Per https://spec.torproject.org/control-spec
+             * section 2.1.1:
+             *
+             * For future-proofing, controller implementors MAY use the
+             * following rules to be compatible with buggy Tor implementations
+             * and with future ones that implement the spec as intended:
+             *
+             * Read \n \t \r and \0 ... \377 as C escapes.
+             * Treat a backslash followed by any other character as that
+             * character.
              */
+            std::string escaped_value;
+            for (size_t i = 0; i < value.size(); ++i) {
+                if (value[i] == '\\') {
+                    // This will always be valid, because if the QuotedString
+                    // ended in an odd number of backslashes, then the parser
+                    // would already have returned above, due to a missing
+                    // terminating double-quote.
+                    ++i;
+                    if (value[i] == 'n') {
+                        escaped_value.push_back('\n');
+                    } else if (value[i] == 't') {
+                        escaped_value.push_back('\t');
+                    } else if (value[i] == 'r') {
+                        escaped_value.push_back('\r');
+                    } else if ('0' <= value[i] && value[i] <= '7') {
+                        size_t j;
+                        // Octal escape sequences have a limit of three octal
+                        // digits, but terminate at the first character that is
+                        // not a valid octal digit if encountered sooner.
+                        for (j = 1; j < 3 && (i + j) < value.size() &&
+                                    '0' <= value[i + j] && value[i + j] <= '7';
+                             ++j) {
+                        }
+                        // Tor restricts first digit to 0-3 for three-digit
+                        // octals. A leading digit of 4-7 would therefore be
+                        // interpreted as a two-digit octal.
+                        if (j == 3 && value[i] > '3') {
+                            j--;
+                        }
+                        escaped_value.push_back(
+                            strtol(value.substr(i, j).c_str(), NULL, 8));
+                        // Account for automatic incrementing at loop end
+                        i += j - 1;
+                    } else {
+                        escaped_value.push_back(value[i]);
+                    }
+                } else {
+                    escaped_value.push_back(value[i]);
+                }
+            }
+            value = escaped_value;
         } else {
             // Unquoted value. Note that values can contain '=' at will, just no
             // spaces
@@ -364,6 +421,12 @@ ReadBinaryFile(const fs::path &filename,
     char buffer[128];
     size_t n;
     while ((n = fread(buffer, 1, sizeof(buffer), f)) > 0) {
+        // Check for reading errors so we don't return any data if we couldn't
+        // read the entire file (or up to maxsize)
+        if (ferror(f)) {
+            fclose(f);
+            return std::make_pair(false, "");
+        }
         retval.append(buffer, buffer + n);
         if (retval.size() > maxsize) {
             break;
@@ -394,7 +457,7 @@ static bool WriteBinaryFile(const fs::path &filename, const std::string &data) {
 
 /**
  * Controller that connects to Tor control socket, authenticate, then create
- * and maintain a ephemeral hidden service.
+ * and maintain an ephemeral hidden service.
  */
 class TorController {
 public:
@@ -452,8 +515,10 @@ TorController::TorController(struct event_base *_base,
     }
     // Start connection attempts immediately
     if (!conn.Connect(_target,
-                      boost::bind(&TorController::connected_cb, this, _1),
-                      boost::bind(&TorController::disconnected_cb, this, _1))) {
+                      std::bind(&TorController::connected_cb, this,
+                                std::placeholders::_1),
+                      std::bind(&TorController::disconnected_cb, this,
+                                std::placeholders::_1))) {
         LogPrintf("tor: Initiating connection to Tor control port %s failed\n",
                   _target);
     }
@@ -489,6 +554,13 @@ void TorController::add_onion_cb(TorControlConnection &_conn,
             if ((i = m.find("PrivateKey")) != m.end()) {
                 private_key = i->second;
             }
+        }
+        if (service_id.empty()) {
+            LogPrintf("tor: Error parsing ADD_ONION parameters:\n");
+            for (const std::string &s : reply.lines) {
+                LogPrintf("    %s\n", SanitizeString(s));
+            }
+            return;
         }
         service = LookupNumeric(std::string(service_id + ".onion").c_str(),
                                 GetListenPort());
@@ -537,7 +609,8 @@ void TorController::auth_cb(TorControlConnection &_conn,
         // the shutdown sequence some day.
         _conn.Command(strprintf("ADD_ONION %s Port=%i,127.0.0.1:%i",
                                 private_key, GetListenPort(), GetListenPort()),
-                      boost::bind(&TorController::add_onion_cb, this, _1, _2));
+                      std::bind(&TorController::add_onion_cb, this,
+                                std::placeholders::_1, std::placeholders::_2));
     } else {
         LogPrintf("tor: Authentication failed\n");
     }
@@ -582,6 +655,11 @@ void TorController::authchallenge_cb(TorControlConnection &_conn,
         if (l.first == "AUTHCHALLENGE") {
             std::map<std::string, std::string> m =
                 ParseTorReplyMapping(l.second);
+            if (m.empty()) {
+                LogPrintf("tor: Error parsing AUTHCHALLENGE parameters: %s\n",
+                          SanitizeString(l.second));
+                return;
+            }
             std::vector<uint8_t> serverHash = ParseHex(m["SERVERHASH"]);
             std::vector<uint8_t> serverNonce = ParseHex(m["SERVERNONCE"]);
             LogPrint(BCLog::TOR,
@@ -605,7 +683,9 @@ void TorController::authchallenge_cb(TorControlConnection &_conn,
             std::vector<uint8_t> computedClientHash = ComputeResponse(
                 TOR_SAFE_CLIENTKEY, cookie, clientNonce, serverNonce);
             _conn.Command("AUTHENTICATE " + HexStr(computedClientHash),
-                          boost::bind(&TorController::auth_cb, this, _1, _2));
+                          std::bind(&TorController::auth_cb, this,
+                                    std::placeholders::_1,
+                                    std::placeholders::_2));
         } else {
             LogPrintf("tor: Invalid reply to AUTHCHALLENGE\n");
         }
@@ -663,17 +743,19 @@ void TorController::protocolinfo_cb(TorControlConnection &_conn,
                 LogPrint(BCLog::TOR,
                          "tor: Using HASHEDPASSWORD authentication\n");
                 boost::replace_all(torpassword, "\"", "\\\"");
-                _conn.Command(
-                    "AUTHENTICATE \"" + torpassword + "\"",
-                    boost::bind(&TorController::auth_cb, this, _1, _2));
+                _conn.Command("AUTHENTICATE \"" + torpassword + "\"",
+                              std::bind(&TorController::auth_cb, this,
+                                        std::placeholders::_1,
+                                        std::placeholders::_2));
             } else {
                 LogPrintf("tor: Password provided with -torpassword, but "
                           "HASHEDPASSWORD authentication is not available\n");
             }
         } else if (methods.count("NULL")) {
             LogPrint(BCLog::TOR, "tor: Using NULL authentication\n");
-            _conn.Command("AUTHENTICATE",
-                          boost::bind(&TorController::auth_cb, this, _1, _2));
+            _conn.Command("AUTHENTICATE", std::bind(&TorController::auth_cb,
+                                                    this, std::placeholders::_1,
+                                                    std::placeholders::_2));
         } else if (methods.count("SAFECOOKIE")) {
             // Cookie: hexdump -e '32/1 "%02x""\n"'  ~/.tor/control_auth_cookie
             LogPrint(BCLog::TOR,
@@ -685,14 +767,16 @@ void TorController::protocolinfo_cb(TorControlConnection &_conn,
             if (status_cookie.first &&
                 status_cookie.second.size() == TOR_COOKIE_SIZE) {
                 // _conn.Command("AUTHENTICATE " + HexStr(status_cookie.second),
-                // boost::bind(&TorController::auth_cb, this, _1, _2));
+                // std::bind(&TorController::auth_cb, this,
+                // std::placeholders::_1, std::placeholders::_2));
                 cookie = std::vector<uint8_t>(status_cookie.second.begin(),
                                               status_cookie.second.end());
                 clientNonce = std::vector<uint8_t>(TOR_NONCE_SIZE, 0);
                 GetRandBytes(&clientNonce[0], TOR_NONCE_SIZE);
                 _conn.Command("AUTHCHALLENGE SAFECOOKIE " + HexStr(clientNonce),
-                              boost::bind(&TorController::authchallenge_cb,
-                                          this, _1, _2));
+                              std::bind(&TorController::authchallenge_cb, this,
+                                        std::placeholders::_1,
+                                        std::placeholders::_2));
             } else {
                 if (status_cookie.first) {
                     LogPrintf("tor: Authentication cookie %s is not exactly %i "
@@ -720,9 +804,10 @@ void TorController::connected_cb(TorControlConnection &_conn) {
     reconnect_timeout = RECONNECT_TIMEOUT_START;
     // First send a PROTOCOLINFO command to figure out what authentication is
     // expected
-    if (!_conn.Command(
-            "PROTOCOLINFO 1",
-            boost::bind(&TorController::protocolinfo_cb, this, _1, _2))) {
+    if (!_conn.Command("PROTOCOLINFO 1",
+                       std::bind(&TorController::protocolinfo_cb, this,
+                                 std::placeholders::_1,
+                                 std::placeholders::_2))) {
         LogPrintf("tor: Error sending initial protocolinfo command\n");
     }
 }
@@ -754,8 +839,10 @@ void TorController::Reconnect() {
      * be restarting.
      */
     if (!conn.Connect(target,
-                      boost::bind(&TorController::connected_cb, this, _1),
-                      boost::bind(&TorController::disconnected_cb, this, _1))) {
+                      std::bind(&TorController::connected_cb, this,
+                                std::placeholders::_1),
+                      std::bind(&TorController::disconnected_cb, this,
+                                std::placeholders::_1))) {
         LogPrintf(
             "tor: Re-initiating connection to Tor control port %s failed\n",
             target);

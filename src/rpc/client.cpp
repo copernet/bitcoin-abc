@@ -5,7 +5,7 @@
 
 #include <rpc/client.h>
 #include <rpc/protocol.h>
-#include <util.h>
+#include <util/system.h>
 
 #include <cstdint>
 #include <set>
@@ -20,7 +20,7 @@ public:
 };
 
 /**
- * Specifiy a (method, idx, name) here if the argument is a non-string RPC
+ * Specify a (method, idx, name) here if the argument is a non-string RPC
  * argument and needs to be converted from JSON.
  *
  * @note Parameter indexes start from 0.
@@ -36,6 +36,7 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"sendtoaddress", 1, "amount"},
     {"sendtoaddress", 4, "subtractfeefromamount"},
     {"settxfee", 0, "amount"},
+    {"sethdseed", 0, "newkeypool"},
     {"getreceivedbyaddress", 1, "minconf"},
     {"getreceivedbyaccount", 1, "minconf"},
     {"getreceivedbylabel", 1, "minconf"},
@@ -49,6 +50,7 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"listreceivedbylabel", 0, "minconf"},
     {"listreceivedbylabel", 1, "include_empty"},
     {"listreceivedbylabel", 2, "include_watchonly"},
+    {"getlabeladdress", 1, "force"},
     {"getbalance", 1, "minconf"},
     {"getbalance", 2, "include_watchonly"},
     {"getblockhash", 0, "height"},
@@ -80,8 +82,10 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"listunspent", 0, "minconf"},
     {"listunspent", 1, "maxconf"},
     {"listunspent", 2, "addresses"},
+    {"listunspent", 3, "include_unsafe"},
     {"listunspent", 4, "query_options"},
     {"getblock", 1, "verbosity"},
+    {"getblock", 1, "verbose"},
     {"getblockheader", 1, "verbose"},
     {"getchaintxstats", 0, "nblocks"},
     {"gettransaction", 1, "include_watchonly"},
@@ -89,14 +93,20 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"createrawtransaction", 0, "inputs"},
     {"createrawtransaction", 1, "outputs"},
     {"createrawtransaction", 2, "locktime"},
-    {"signrawtransaction", 1, "prevtxs"},
-    {"signrawtransaction", 2, "privkeys"},
     {"signrawtransactionwithkey", 1, "privkeys"},
     {"signrawtransactionwithkey", 2, "prevtxs"},
     {"signrawtransactionwithwallet", 1, "prevtxs"},
     {"sendrawtransaction", 1, "allowhighfees"},
+    {"testmempoolaccept", 0, "rawtxs"},
+    {"testmempoolaccept", 1, "allowhighfees"},
     {"combinerawtransaction", 0, "txs"},
     {"fundrawtransaction", 1, "options"},
+    {"createpsbt", 0, "inputs"},
+    {"createpsbt", 1, "outputs"},
+    {"createpsbt", 2, "locktime"},
+    {"combinepsbt", 0, "txs"},
+    {"finalizepsbt", 1, "extract"},
+    {"converttopsbt", 1, "permitsigdata"},
     {"gettxout", 1, "n"},
     {"gettxout", 2, "include_mempool"},
     {"gettxoutproof", 0, "txids"},
@@ -110,6 +120,8 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"importmulti", 1, "options"},
     {"verifychain", 0, "checklevel"},
     {"verifychain", 1, "nblocks"},
+    {"getblockstats", 0, "hash_or_height"},
+    {"getblockstats", 1, "stats"},
     {"pruneblockchain", 0, "height"},
     {"keypoolrefill", 0, "newsize"},
     {"getrawmempool", 0, "verbose"},
@@ -122,6 +134,8 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"getmempoolancestors", 1, "verbose"},
     {"getmempooldescendants", 1, "verbose"},
     {"disconnectnode", 1, "nodeid"},
+    {"logging", 0, "include"},
+    {"logging", 1, "exclude"},
     // Echo with conversion (For testing only)
     {"echojson", 0, "arg0"},
     {"echojson", 1, "arg1"},
@@ -346,7 +360,7 @@ UniValue RPCConvertNamedValues(const std::string &strMethod,
     UniValue params(UniValue::VOBJ);
 
     for (const std::string &s : strParams) {
-        size_t pos = s.find("=");
+        size_t pos = s.find('=');
         if (pos == std::string::npos) {
             throw(std::runtime_error("No '=' in named argument '" + s +
                                      "', this needs to be present for every "

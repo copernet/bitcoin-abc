@@ -72,9 +72,9 @@ private:
     uint64_t nMaxBlockSize;
 };
 
-CDataStream AddrmanToStream(CAddrManSerializationMock &_addrman) {
+static CDataStream AddrmanToStream(CAddrManSerializationMock &_addrman) {
     CDataStream ssPeersIn(SER_DISK, CLIENT_VERSION);
-    ssPeersIn << FLATDATA(Params().DiskMagic());
+    ssPeersIn << Params().DiskMagic();
     ssPeersIn << _addrman;
     std::string str = ssPeersIn.str();
     std::vector<uint8_t> vchData(str.begin(), str.end());
@@ -82,6 +82,17 @@ CDataStream AddrmanToStream(CAddrManSerializationMock &_addrman) {
 }
 
 BOOST_FIXTURE_TEST_SUITE(net_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(cnode_listen_port) {
+    // test default
+    unsigned short port = GetListenPort();
+    BOOST_CHECK(port == Params().GetDefaultPort());
+    // test set port
+    unsigned short altPort = 12345;
+    gArgs.SoftSetArg("-port", std::to_string(altPort));
+    port = GetListenPort();
+    BOOST_CHECK(port == altPort);
+}
 
 BOOST_AUTO_TEST_CASE(caddrdb_read) {
     CAddrManUncorrupted addrmanUncorrupted;
@@ -107,7 +118,7 @@ BOOST_AUTO_TEST_CASE(caddrdb_read) {
     BOOST_CHECK(addrman1.size() == 0);
     try {
         uint8_t pchMsgTmp[4];
-        ssPeers1 >> FLATDATA(pchMsgTmp);
+        ssPeers1 >> pchMsgTmp;
         ssPeers1 >> addrman1;
     } catch (const std::exception &e) {
         exceptionThrown = true;
@@ -138,7 +149,7 @@ BOOST_AUTO_TEST_CASE(caddrdb_read_corrupted) {
     BOOST_CHECK(addrman1.size() == 0);
     try {
         uint8_t pchMsgTmp[4];
-        ssPeers1 >> FLATDATA(pchMsgTmp);
+        ssPeers1 >> pchMsgTmp;
         ssPeers1 >> addrman1;
     } catch (const std::exception &e) {
         exceptionThrown = true;
@@ -168,20 +179,20 @@ BOOST_AUTO_TEST_CASE(cnode_simple_test) {
     ipv4Addr.s_addr = 0xa0b0c001;
 
     CAddress addr = CAddress(CService(ipv4Addr, 7777), NODE_NETWORK);
-    std::string pszDest = "";
+    std::string pszDest;
     bool fInboundIn = false;
 
     // Test that fFeeler is false by default.
-    std::unique_ptr<CNode> pnode1(new CNode(id++, NODE_NETWORK, height, hSocket,
-                                            addr, 0, 0, CAddress(), pszDest,
-                                            fInboundIn));
+    auto pnode1 =
+        std::make_unique<CNode>(id++, NODE_NETWORK, height, hSocket, addr, 0, 0,
+                                CAddress(), pszDest, fInboundIn);
     BOOST_CHECK(pnode1->fInbound == false);
     BOOST_CHECK(pnode1->fFeeler == false);
 
     fInboundIn = true;
-    std::unique_ptr<CNode> pnode2(new CNode(id++, NODE_NETWORK, height, hSocket,
-                                            addr, 1, 1, CAddress(), pszDest,
-                                            fInboundIn));
+    auto pnode2 =
+        std::make_unique<CNode>(id++, NODE_NETWORK, height, hSocket, addr, 1, 1,
+                                CAddress(), pszDest, fInboundIn);
     BOOST_CHECK(pnode2->fInbound == true);
     BOOST_CHECK(pnode2->fFeeler == false);
 }

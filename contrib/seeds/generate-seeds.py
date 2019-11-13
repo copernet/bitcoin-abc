@@ -48,7 +48,7 @@ def name_to_ipv6(addr):
     if len(addr) > 6 and addr.endswith('.onion'):
         vchAddr = b32decode(addr[0:-6], True)
         if len(vchAddr) != 16 - len(pchOnionCat):
-            raise ValueError('Invalid onion {}'.format(s))
+            raise ValueError('Invalid onion {}'.format(vchAddr))
         return pchOnionCat + vchAddr
     elif '.' in addr:  # IPv4
         return pchIPv4 + bytearray((int(x) for x in addr.split('.')))
@@ -131,12 +131,12 @@ def main():
     g.write(' *\n')
     g.write(' * Each line contains a 16-byte IPv6 address and a port.\n')
     g.write(
-        ' * IPv4 as well as onion addresses are wrapped inside a IPv6 address accordingly.\n')
+        ' * IPv4 as well as onion addresses are wrapped inside an IPv6 address accordingly.\n')
     g.write(' */\n')
-    with open(os.path.join(indir, 'nodes_main.txt'), 'r') as f:
+    with open(os.path.join(indir, 'nodes_main.txt'), 'r', encoding="utf8") as f:
         process_nodes(g, f, 'pnSeed6_main', 8333)
     g.write('\n')
-    with open(os.path.join(indir, 'nodes_test.txt'), 'r') as f:
+    with open(os.path.join(indir, 'nodes_test.txt'), 'r', encoding="utf8") as f:
         process_nodes(g, f, 'pnSeed6_test', 18333)
     g.write('#endif // BITCOIN_CHAINPARAMSSEEDS_H\n')
 

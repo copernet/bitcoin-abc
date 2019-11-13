@@ -48,7 +48,7 @@ static const int AVALANCHE_MAX_INFLIGHT_POLL = 10;
  * Special NodeId that represent no node.
  */
 static const NodeId NO_NODE = -1;
-}
+} // namespace
 
 /**
  * Vote history.
@@ -315,7 +315,7 @@ private:
     std::atomic<bool> stopRequest;
     bool running GUARDED_BY(cs_running);
 
-    CWaitableCriticalSection cs_running;
+    Mutex cs_running;
     std::condition_variable cond_running;
 
 public:

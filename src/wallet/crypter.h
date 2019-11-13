@@ -11,8 +11,6 @@
 
 #include <atomic>
 
-class uint256;
-
 const unsigned int WALLET_CRYPTO_KEY_SIZE = 32;
 const unsigned int WALLET_CRYPTO_SALT_SIZE = 8;
 const unsigned int WALLET_CRYPTO_IV_SIZE = 16;
@@ -118,7 +116,7 @@ public:
  */
 class CCryptoKeyStore : public CBasicKeyStore {
 private:
-    CKeyingMaterial vMasterKey;
+    CKeyingMaterial vMasterKey GUARDED_BY(cs_KeyStore);
 
     //! if fUseCrypto is true, mapKeys must be empty
     //! if fUseCrypto is false, vMasterKey must be empty
@@ -134,7 +132,7 @@ protected:
     bool EncryptKeys(CKeyingMaterial &vMasterKeyIn);
 
     bool Unlock(const CKeyingMaterial &vMasterKeyIn);
-    CryptedKeyMap mapCryptedKeys;
+    CryptedKeyMap mapCryptedKeys GUARDED_BY(cs_KeyStore);
 
 public:
     CCryptoKeyStore()

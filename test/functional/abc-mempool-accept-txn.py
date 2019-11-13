@@ -16,7 +16,6 @@ from test_framework.blocktools import (
     create_transaction,
 )
 from test_framework.cdefs import MAX_STANDARD_TX_SIGOPS
-from test_framework.comptool import TestInstance, TestManager
 from test_framework.key import CECKey
 from test_framework.messages import (
     COutPoint,
@@ -25,7 +24,9 @@ from test_framework.messages import (
     CTxOut,
     ToHex,
 )
-from test_framework.mininode import network_thread_start
+from test_framework.mininode import (
+    P2PDataStore,
+)
 from test_framework.script import (
     CScript,
     hash160,
@@ -39,27 +40,22 @@ from test_framework.script import (
     SIGHASH_FORKID,
     SignatureHashForkId,
 )
-from test_framework.test_framework import ComparisonTestFramework
+from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
 # Error for too many sigops in one TX
-TXNS_TOO_MANY_SIGOPS_ERROR = b'bad-txns-too-many-sigops'
-RPC_TXNS_TOO_MANY_SIGOPS_ERROR = "64: " + \
-    TXNS_TOO_MANY_SIGOPS_ERROR.decode("utf-8")
+RPC_TXNS_TOO_MANY_SIGOPS_ERROR = "bad-txns-too-many-sigops"
 
 
 class PreviousSpendableOutput():
 
     def __init__(self, tx=CTransaction(), n=-1):
         self.tx = tx
-        self.n = n  # the output we're spending
+        # The output we're spending
+        self.n = n
 
 
-class FullBlockTest(ComparisonTestFramework):
-
-    # Can either run this test as 1 node with expected answers, or two and compare them.
-    # Change the "outcome" variable from each TestInstance object to only do
-    # the comparison.
+class FullBlockTest(BitcoinTestFramework):
 
     def set_test_params(self):
         self.num_nodes = 1
@@ -80,12 +76,6 @@ class FullBlockTest(ComparisonTestFramework):
         super().add_options(parser)
         parser.add_argument(
             "--runbarelyexpensive", dest="runbarelyexpensive", default=True)
-
-    def run_test(self):
-        self.test = TestManager(self, self.options.tmpdir)
-        self.test.add_all_connections(self.nodes)
-        network_thread_start()
-        self.test.run()
 
     def add_transactions_to_block(self, block, tx_list):
         [tx.rehash() for tx in tx_list]
@@ -150,7 +140,10 @@ class FullBlockTest(ComparisonTestFramework):
         self.blocks[number] = block
         return block
 
-    def get_tests(self):
+    def run_test(self):
+        node = self.nodes[0]
+        node.add_p2p_connection(P2PDataStore())
+
         self.genesis_hash = int(self.nodes[0].getbestblockhash(), 16)
         self.block_heights[self.genesis_hash] = 0
         spendable_outputs = []
@@ -162,17 +155,6 @@ class FullBlockTest(ComparisonTestFramework):
         # get an output that we previously marked as spendable
         def get_spendable_output():
             return PreviousSpendableOutput(spendable_outputs.pop(0).vtx[0], 0)
-
-        # returns a test case that asserts that the current tip was accepted
-        def accepted():
-            return TestInstance([[self.tip, True]])
-
-        # returns a test case that asserts that the current tip was rejected
-        def rejected(reject=None):
-            if reject is None:
-                return TestInstance([[self.tip, False]])
-            else:
-                return TestInstance([[self.tip, reject]])
 
         # move the tip back to a previous block
         def tip(number):
@@ -196,23 +178,19 @@ class FullBlockTest(ComparisonTestFramework):
 
         # shorthand for functions
         block = self.next_block
-        create_tx = self.create_tx
-
-        # shorthand for variables
-        node = self.nodes[0]
 
         # Create a new block
         block(0)
         save_spendable_output()
-        yield accepted()
+        node.p2p.send_blocks_and_test([self.tip], node)
 
         # Now we need that block to mature so we can spend the coinbase.
-        test = TestInstance(sync_every_block=False)
+        maturity_blocks = []
         for i in range(99):
             block(5000 + i)
-            test.blocks_and_transactions.append([self.tip, True])
+            maturity_blocks.append(self.tip)
             save_spendable_output()
-        yield test
+        node.p2p.send_blocks_and_test(maturity_blocks, node)
 
         # Collect spendable outputs now to avoid cluttering the code later on
         out = []
@@ -250,7 +228,7 @@ class FullBlockTest(ComparisonTestFramework):
         # Add the transaction to the block
         block(1)
         update_block(1, [p2sh_tx])
-        yield accepted()
+        node.p2p.send_blocks_and_test([self.tip], node)
 
         # Sigops p2sh limit for the mempool test
         p2sh_sigops_limit_mempool = MAX_STANDARD_TX_SIGOPS - \
@@ -279,7 +257,7 @@ class FullBlockTest(ComparisonTestFramework):
         # Mine the transaction
         block(2, spend=out[1])
         update_block(2, [max_p2sh_sigops_txn])
-        yield accepted()
+        node.p2p.send_blocks_and_test([self.tip], node)
 
         # The transaction has been mined, it's not in the mempool anymore
         assert_equal(set(node.getrawmempool()), set())

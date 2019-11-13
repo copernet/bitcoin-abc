@@ -4,18 +4,18 @@
 
 #include <httprpc.h>
 
-#include <base58.h>
 #include <chainparams.h>
 #include <config.h>
 #include <crypto/hmac_sha256.h>
 #include <httpserver.h>
+#include <key_io.h>
 #include <random.h>
 #include <rpc/protocol.h>
 #include <rpc/server.h>
 #include <sync.h>
 #include <ui_interface.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <boost/algorithm/string.hpp> // boost::trim
 
@@ -33,7 +33,7 @@ static const int64_t RPC_AUTH_BRUTE_FORCE_DELAY = 250;
  */
 class HTTPRPCTimer : public RPCTimerBase {
 public:
-    HTTPRPCTimer(struct event_base *eventBase, std::function<void(void)> &func,
+    HTTPRPCTimer(struct event_base *eventBase, std::function<void()> &func,
                  int64_t millis)
         : ev(eventBase, false, func) {
         struct timeval tv;
@@ -52,7 +52,7 @@ public:
 
     const char *Name() override { return "HTTP"; }
 
-    RPCTimerBase *NewTimer(std::function<void(void)> &func,
+    RPCTimerBase *NewTimer(std::function<void()> &func,
                            int64_t millis) override {
         return new HTTPRPCTimer(base, func, millis);
     }
@@ -86,11 +86,11 @@ static void JSONErrorReply(HTTPRequest *req, const UniValue &objError,
  * config file.
  */
 static bool multiUserAuthorized(std::string strUserPass) {
-    if (strUserPass.find(":") == std::string::npos) {
+    if (strUserPass.find(':') == std::string::npos) {
         return false;
     }
-    std::string strUser = strUserPass.substr(0, strUserPass.find(":"));
-    std::string strPass = strUserPass.substr(strUserPass.find(":") + 1);
+    std::string strUser = strUserPass.substr(0, strUserPass.find(':'));
+    std::string strPass = strUserPass.substr(strUserPass.find(':') + 1);
 
     for (const std::string &strRPCAuth : gArgs.GetArgs("-rpcauth")) {
         // Search for multi-user login/pass "rpcauth" from config
@@ -142,8 +142,8 @@ static bool RPCAuthorized(Config &config, const std::string &strAuth,
     boost::trim(strUserPass64);
     std::string strUserPass = DecodeBase64(strUserPass64);
 
-    if (strUserPass.find(":") != std::string::npos) {
-        strAuthUsernameOut = strUserPass.substr(0, strUserPass.find(":"));
+    if (strUserPass.find(':') != std::string::npos) {
+        strAuthUsernameOut = strUserPass.substr(0, strUserPass.find(':'));
     }
 
     // Check if authorized under single-user field

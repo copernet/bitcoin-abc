@@ -3,8 +3,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_RPCCLIENT_H
-#define BITCOIN_RPCCLIENT_H
+#ifndef BITCOIN_RPC_CLIENT_H
+#define BITCOIN_RPC_CLIENT_H
 
 #include <univalue.h>
 
@@ -16,10 +16,10 @@ UniValue RPCConvertValues(const std::string &strMethod,
 UniValue RPCConvertNamedValues(const std::string &strMethod,
                                const std::vector<std::string> &strParams);
 
-/** Non-RFC4627 JSON parser, accepts internal values (such as numbers, true,
- * false, null)
- * as well as objects and arrays.
+/**
+ * Non-RFC4627 JSON parser, accepts internal values (such as numbers, true,
+ * false, null) as well as objects and arrays.
  */
 UniValue ParseNonRFCJSONValue(const std::string &strVal);
 
-#endif // BITCOIN_RPCCLIENT_H
+#endif // BITCOIN_RPC_CLIENT_H

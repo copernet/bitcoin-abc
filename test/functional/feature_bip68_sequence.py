@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2016 The Bitcoin Core developers
+# Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
-#
-# Test BIP68 implementation
-#
+"""Test BIP68 implementation."""
 
 import time
 
@@ -43,7 +40,7 @@ SEQUENCE_LOCKTIME_GRANULARITY = 9
 SEQUENCE_LOCKTIME_MASK = 0x0000ffff
 
 # RPC error for non-BIP68 final transactions
-NOT_FINAL_ERROR = "64: non-BIP68-final"
+NOT_FINAL_ERROR = "non-BIP68-final (code 64)"
 
 
 class BIP68Test(BitcoinTestFramework):
@@ -91,7 +88,7 @@ class BIP68Test(BitcoinTestFramework):
         self.nodes[0].sendtoaddress(new_addr, 2)
 
         utxos = self.nodes[0].listunspent(0, 0)
-        assert(len(utxos) > 0)
+        assert len(utxos) > 0
 
         utxo = utxos[0]
 
@@ -318,7 +315,7 @@ class BIP68Test(BitcoinTestFramework):
             self.nodes[0].generate(1)
             cur_time += 600
 
-        assert(tx2.hash in self.nodes[0].getrawmempool())
+        assert tx2.hash in self.nodes[0].getrawmempool()
 
         test_nonzero_locks(
             tx2, self.nodes[0], use_height_lock=True)
@@ -332,26 +329,26 @@ class BIP68Test(BitcoinTestFramework):
         # Advance the time on the node so that we can test timelocks
         self.nodes[0].setmocktime(cur_time + 600)
         self.nodes[0].generate(1)
-        assert(tx2.hash not in self.nodes[0].getrawmempool())
+        assert tx2.hash not in self.nodes[0].getrawmempool()
 
         # Now that tx2 is not in the mempool, a sequence locked spend should
         # succeed
         tx3 = test_nonzero_locks(
             tx2, self.nodes[0], use_height_lock=False)
-        assert(tx3.hash in self.nodes[0].getrawmempool())
+        assert tx3.hash in self.nodes[0].getrawmempool()
 
         self.nodes[0].generate(1)
-        assert(tx3.hash not in self.nodes[0].getrawmempool())
+        assert tx3.hash not in self.nodes[0].getrawmempool()
 
         # One more test, this time using height locks
         tx4 = test_nonzero_locks(
             tx3, self.nodes[0], use_height_lock=True)
-        assert(tx4.hash in self.nodes[0].getrawmempool())
+        assert tx4.hash in self.nodes[0].getrawmempool()
 
         # Now try combining confirmed and unconfirmed inputs
         tx5 = test_nonzero_locks(
             tx4, self.nodes[0], use_height_lock=True)
-        assert(tx5.hash not in self.nodes[0].getrawmempool())
+        assert tx5.hash not in self.nodes[0].getrawmempool()
 
         utxos = self.nodes[0].listunspent()
         tx5.vin.append(
@@ -372,8 +369,8 @@ class BIP68Test(BitcoinTestFramework):
         # If we invalidate the tip, tx3 should get added to the mempool, causing
         # tx4 to be removed (fails sequence-lock).
         self.nodes[0].invalidateblock(self.nodes[0].getbestblockhash())
-        assert(tx4.hash not in self.nodes[0].getrawmempool())
-        assert(tx3.hash in self.nodes[0].getrawmempool())
+        assert tx4.hash not in self.nodes[0].getrawmempool()
+        assert tx3.hash in self.nodes[0].getrawmempool()
 
         # Now mine 2 empty blocks to reorg out the current tip (labeled tip-1 in
         # diagram above).
@@ -393,8 +390,8 @@ class BIP68Test(BitcoinTestFramework):
             cur_time += 1
 
         mempool = self.nodes[0].getrawmempool()
-        assert(tx3.hash not in mempool)
-        assert(tx2.hash in mempool)
+        assert tx3.hash not in mempool
+        assert tx2.hash in mempool
 
         # Reset the chain and get rid of the mocktimed-blocks
         self.nodes[0].setmocktime(0)
@@ -403,11 +400,8 @@ class BIP68Test(BitcoinTestFramework):
         self.nodes[0].generate(10)
 
     def get_csv_status(self):
-        softforks = self.nodes[0].getblockchaininfo()['softforks']
-        for sf in softforks:
-            if sf['id'] == 'csv' and sf['version'] == 5:
-                return sf['reject']['status']
-        raise AssertionError('Cannot find CSV fork activation informations')
+        height = self.nodes[0].getblockchaininfo()['blocks']
+        return height >= 576
 
     # Make sure that BIP68 isn't being used to validate blocks, prior to
     # versionbits activation.  If more blocks are mined prior to this test
@@ -492,9 +486,9 @@ class BIP68Test(BitcoinTestFramework):
             "hex"]
         try:
             self.nodes[1].sendrawtransaction(tx_signed)
-            assert(before_activation == False)
+            assert before_activation == False
         except:
-            assert(before_activation)
+            assert before_activation
 
 
 if __name__ == '__main__':

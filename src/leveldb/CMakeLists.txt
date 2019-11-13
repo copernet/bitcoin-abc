@@ -9,8 +9,8 @@ project(Leveldb VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 11)
 
 # Remove some warnings for leveldb as they can get noisy.
-add_compiler_flag(-Wno-sign-compare -Wno-implicit-fallthrough)
-add_c_compiler_flag(-Wno-strict-prototypes)
+add_compiler_flags(-Wno-sign-compare -Wno-implicit-fallthrough)
+add_c_compiler_flags(-Wno-strict-prototypes)
 remove_compiler_flags(-Wstrict-prototypes)
 
 include(CheckIncludeFileCXX)
@@ -101,6 +101,8 @@ else()
 		set(LEVELDB_OS SOLARIS)
 	elseif(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
 		set(LEVELDB_OS FREEBSD)
+	elseif(${CMAKE_SYSTEM_NAME} MATCHES "KFreeBSD")
+		set(LEVELDB_OS KFREEBSD)
 	elseif(${CMAKE_SYSTEM_NAME} MATCHES "NetBSD")
 		set(LEVELDB_OS NETBSD)
 	elseif(${CMAKE_SYSTEM_NAME} MATCHES "OpenBSD")
@@ -116,8 +118,7 @@ else()
 		# No idea what's the proper system name is here.
 		set(LEVELDB_OS IOS)
 	else()
-		# Unknown plateform, assume linux.
-		set(LEVELDB_OS LINUX)
+		message(FATAL_ERROR "Cannot build leveldb for ${CMAKE_SYSTEM_NAME}. Please file a bug report.")
 	endif()
 endif()
 

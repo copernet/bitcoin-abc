@@ -2,11 +2,11 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "bitcoinamountfield.h"
+#include <qt/bitcoinamountfield.h>
 
-#include "bitcoinunits.h"
-#include "guiconstants.h"
-#include "qvaluecombobox.h"
+#include <qt/bitcoinunits.h>
+#include <qt/guiconstants.h>
+#include <qt/qvaluecombobox.h>
 
 #include <QAbstractSpinBox>
 #include <QApplication>
@@ -27,8 +27,8 @@ public:
           singleStep(100000 * SATOSHI) {
         setAlignment(Qt::AlignRight);
 
-        connect(lineEdit(), SIGNAL(textEdited(QString)), this,
-                SIGNAL(valueChanged()));
+        connect(lineEdit(), &QLineEdit::textEdited, this,
+                &AmountSpinBox::valueChanged);
     }
 
     QValidator::State validate(QString &text, int &pos) const override {
@@ -192,14 +192,14 @@ Q_SIGNALS:
     void valueChanged();
 };
 
-#include "bitcoinamountfield.moc"
+#include <qt/bitcoinamountfield.moc>
 
 BitcoinAmountField::BitcoinAmountField(QWidget *parent)
     : QWidget(parent), amount(0) {
     amount = new AmountSpinBox(this);
     amount->setLocale(QLocale::c());
     amount->installEventFilter(this);
-    amount->setMaximumWidth(170);
+    amount->setMaximumWidth(240);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->addWidget(amount);
@@ -215,9 +215,12 @@ BitcoinAmountField::BitcoinAmountField(QWidget *parent)
     setFocusProxy(amount);
 
     // If one if the widgets changes, the combined content changes as well
-    connect(amount, SIGNAL(valueChanged()), this, SIGNAL(valueChanged()));
-    connect(unit, SIGNAL(currentIndexChanged(int)), this,
-            SLOT(unitChanged(int)));
+    connect(amount, &AmountSpinBox::valueChanged, this,
+            &BitcoinAmountField::valueChanged);
+    connect(
+        unit,
+        static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+        this, &BitcoinAmountField::unitChanged);
 
     // Set default based on configuration
     unitChanged(unit->currentIndex());

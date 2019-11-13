@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2016 The Bitcoin Core developers
+# Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
+"""Test the pruning code.
 
-#
-# Test pruning code
-# ********
-# WARNING:
-# This test uses 4GB of disk space.
-# This test takes 30 mins or more (up to 2 hours)
-# ********
+WARNING:
+This test uses 4GB of disk space.
+This test takes 30 mins or more (up to 2 hours)
+"""
 
-import time
 import os
 
 from test_framework.blocktools import mine_big_block
@@ -22,6 +19,7 @@ from test_framework.util import (
     assert_raises_rpc_error,
     connect_nodes,
     sync_blocks,
+    wait_until,
 )
 
 
@@ -34,7 +32,7 @@ TIMESTAMP_WINDOW = 2 * 60 * 60
 
 
 def calc_usage(blockdir):
-    return sum(os.path.getsize(blockdir + f) for f in os.listdir(blockdir) if os.path.isfile(blockdir + f)) / (1024. * 1024.)
+    return sum(os.path.getsize(blockdir+f) for f in os.listdir(blockdir) if os.path.isfile(os.path.join(blockdir, f))) / (1024. * 1024.)
 
 
 class PruneTest(BitcoinTestFramework):
@@ -63,7 +61,8 @@ class PruneTest(BitcoinTestFramework):
     def setup_network(self):
         self.setup_nodes()
 
-        self.prunedir = self.options.tmpdir + "/node2/regtest/blocks/"
+        self.prunedir = os.path.join(
+            self.nodes[2].datadir, 'regtest', 'blocks', '')
 
         connect_nodes(self.nodes[0], self.nodes[1])
         connect_nodes(self.nodes[1], self.nodes[2])
@@ -88,7 +87,7 @@ class PruneTest(BitcoinTestFramework):
         sync_blocks(self.nodes[0:5])
 
     def test_height_min(self):
-        if not os.path.isfile(self.prunedir + "blk00000.dat"):
+        if not os.path.isfile(os.path.join(self.prunedir, "blk00000.dat")):
             raise AssertionError("blk00000.dat is missing, pruning too early")
         self.log.info("Success")
         self.log.info("Though we're already using more than 550MiB, current usage: {}".format(
@@ -100,12 +99,9 @@ class PruneTest(BitcoinTestFramework):
         for i in range(25):
             mine_big_block(self.nodes[0], self.utxo_cache_0)
 
-        waitstart = time.time()
-        while os.path.isfile(self.prunedir + "blk00000.dat"):
-            time.sleep(0.1)
-            if time.time() - waitstart > 30:
-                raise AssertionError(
-                    "blk00000.dat not pruned when it should be")
+        # Wait for blk00000.dat to be pruned
+        wait_until(lambda: not os.path.isfile(
+            os.path.join(self.prunedir, "blk00000.dat")), timeout=30)
 
         self.log.info("Success")
         usage = calc_usage(self.prunedir)
@@ -170,7 +166,7 @@ class PruneTest(BitcoinTestFramework):
                       badhash, invalidheight))
         self.nodes[1].invalidateblock(badhash)
 
-        # We've now switched to our previously mined-24 block fork on node 1, but thats not what we want.
+        # We've now switched to our previously mined-24 block fork on node 1, but that's not what we want.
         # So invalidate that fork as well, until we're on the same chain as
         # node 0/2 (but at an ancestor 288 blocks ago)
         mainchainhash = self.nodes[0].getblockhash(invalidheight - 1)
@@ -179,7 +175,7 @@ class PruneTest(BitcoinTestFramework):
             self.nodes[1].invalidateblock(curhash)
             curhash = self.nodes[1].getblockhash(invalidheight - 1)
 
-        assert(self.nodes[1].getblockcount() == invalidheight - 1)
+        assert self.nodes[1].getblockcount() == invalidheight - 1
         self.log.info("New best height: {}".format(
                       self.nodes[1].getblockcount()))
 
@@ -232,8 +228,8 @@ class PruneTest(BitcoinTestFramework):
 
         # Verify that we have enough history to reorg back to the fork point.
         # Although this is more than 288 blocks, because this chain was written
-        # more recently and only its other 299 small and 220 large block are in
-        # the block files after it, its expected to still be retained.
+        # more recently and only its other 299 small and 220 large blocks are in
+        # the block files after it, it is expected to still be retained.
         self.nodes[2].getblock(self.nodes[2].getblockhash(self.forkheight))
 
         first_reorg_height = self.nodes[2].getblockcount()
@@ -244,7 +240,7 @@ class PruneTest(BitcoinTestFramework):
 
         # As of 0.10 the current block download logic is not able to reorg to
         # the original chain created in create_chain_with_stale_blocks because
-        # it doesn't know of any peer thats on that chain from which to
+        # it doesn't know of any peer that's on that chain from which to
         # redownload its missing blocks. Invalidate the reorg_test chain in
         # node 0 as well, it can successfully switch to the original chain
         # because it has all the block data. However it must mine enough blocks
@@ -258,22 +254,20 @@ class PruneTest(BitcoinTestFramework):
                 "Rewind node 0 to prev main chain to mine longer chain to trigger redownload. Blocks needed: {}".format(
                     blocks_to_mine))
             self.nodes[0].invalidateblock(curchainhash)
-            assert(self.nodes[0].getblockcount() == self.mainchainheight)
-            assert(self.nodes[0].getbestblockhash() == self.mainchainhash2)
+            assert self.nodes[0].getblockcount() == self.mainchainheight
+            assert self.nodes[0].getbestblockhash() == self.mainchainhash2
             goalbesthash = self.nodes[0].generate(blocks_to_mine)[-1]
             goalbestheight = first_reorg_height + 1
 
         self.log.info(
             "Verify node 2 reorged back to the main chain, some blocks of which it had to redownload")
-        waitstart = time.time()
-        while self.nodes[2].getblockcount() < goalbestheight:
-            time.sleep(0.1)
-            if time.time() - waitstart > 900:
-                raise AssertionError("Node 2 didn't reorg to proper height")
-        assert(self.nodes[2].getbestblockhash() == goalbesthash)
+        # Wait for Node 2 to reorg to proper height
+        wait_until(lambda: self.nodes[2].getblockcount(
+        ) >= goalbestheight, timeout=900)
+        assert self.nodes[2].getbestblockhash() == goalbesthash
         # Verify we can now have the data for a block previously pruned
-        assert(self.nodes[2].getblock(
-            self.forkhash)["height"] == self.forkheight)
+        assert self.nodes[2].getblock(
+            self.forkhash)["height"] == self.forkheight
 
     def manual_test(self, node_number, use_timestamp):
         # at this point, node has 995 blocks and has not yet run in prune mode
@@ -311,7 +305,7 @@ class PruneTest(BitcoinTestFramework):
                 assert_equal(ret, expected_ret)
 
         def has_block(index):
-            return os.path.isfile(self.options.tmpdir + "/node{}/regtest/blocks/blk{:05}.dat".format(node_number, index))
+            return os.path.isfile(os.path.join(self.nodes[node_number].datadir, "regtest", "blocks", "blk{:05}.dat".format(index)))
 
         # should not prune because chain tip of node 3 (995) < PruneAfterHeight
         # (1000)
@@ -385,7 +379,7 @@ class PruneTest(BitcoinTestFramework):
             2, extra_args=["-prune=550", "-noparkdeepreorg", "-maxreorgdepth=-1"])
         self.log.info("Success")
 
-        # check that wallet loads loads successfully when restarting a pruned node after IBD.
+        # check that wallet loads successfully when restarting a pruned node after IBD.
         # this was reported to fail in #7494.
         self.log.info("Syncing node 5 to test wallet")
         connect_nodes(self.nodes[0], self.nodes[5])

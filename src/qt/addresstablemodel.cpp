@@ -4,8 +4,9 @@
 
 #include <qt/addresstablemodel.h>
 
-#include <dstencode.h>
+#include <cashaddrenc.h>
 #include <interfaces/node.h>
+#include <key_io.h>
 #include <qt/guiutil.h>
 #include <qt/walletmodel.h>
 #include <wallet/wallet.h>
@@ -53,11 +54,11 @@ translateTransactionType(const QString &strPurpose, bool isMine) {
     AddressTableEntry::Type addressType = AddressTableEntry::Hidden;
     // "refund" addresses aren't shown, and change addresses aren't in
     // mapAddressBook at all.
-    if (strPurpose == "send")
+    if (strPurpose == "send") {
         addressType = AddressTableEntry::Sending;
-    else if (strPurpose == "receive")
+    } else if (strPurpose == "receive") {
         addressType = AddressTableEntry::Receiving;
-    else if (strPurpose == "unknown" || strPurpose == "") {
+    } else if (strPurpose == "unknown" || strPurpose == "") {
         // if purpose not set, guess
         addressType = (isMine ? AddressTableEntry::Receiving
                               : AddressTableEntry::Sending);
@@ -80,7 +81,8 @@ public:
                 QString::fromStdString(address.purpose), address.is_mine);
             cachedAddressTable.append(AddressTableEntry(
                 addressType, QString::fromStdString(address.name),
-                QString::fromStdString(EncodeDestination(address.dest))));
+                QString::fromStdString(EncodeCashAddr(
+                    address.dest, parent->walletModel->getChainParams()))));
         }
         // qLowerBound() and qUpperBound() require our cachedAddressTable list
         // to be sorted in asc order. Even though the map is already sorted this
@@ -148,13 +150,13 @@ public:
         if (idx >= 0 && idx < cachedAddressTable.size()) {
             return &cachedAddressTable[idx];
         } else {
-            return 0;
+            return nullptr;
         }
     }
 };
 
 AddressTableModel::AddressTableModel(WalletModel *parent)
-    : QAbstractTableModel(parent), walletModel(parent), priv(0) {
+    : QAbstractTableModel(parent), walletModel(parent) {
     columns << tr("Label") << tr("Address");
     priv = new AddressTablePriv(this);
     priv->refreshAddressTable(parent->wallet());
@@ -175,7 +177,9 @@ int AddressTableModel::columnCount(const QModelIndex &parent) const {
 }
 
 QVariant AddressTableModel::data(const QModelIndex &index, int role) const {
-    if (!index.isValid()) return QVariant();
+    if (!index.isValid()) {
+        return QVariant();
+    }
 
     AddressTableEntry *rec =
         static_cast<AddressTableEntry *>(index.internalPointer());
@@ -212,7 +216,9 @@ QVariant AddressTableModel::data(const QModelIndex &index, int role) const {
 
 bool AddressTableModel::setData(const QModelIndex &index, const QVariant &value,
                                 int role) {
-    if (!index.isValid()) return false;
+    if (!index.isValid()) {
+        return false;
+    }
     AddressTableEntry *rec =
         static_cast<AddressTableEntry *>(index.internalPointer());
     std::string strPurpose =
@@ -246,7 +252,9 @@ bool AddressTableModel::setData(const QModelIndex &index, const QVariant &value,
             // Check for duplicate addresses to prevent accidental deletion of
             // addresses, if you try to paste an existing address over another
             // address (with a different label)
-            if (walletModel->wallet().getAddress(newAddress)) {
+            if (walletModel->wallet().getAddress(
+                    newAddress, /* name= */ nullptr, /* is_mine= */ nullptr,
+                    /* purpose= */ nullptr)) {
                 editStatus = DUPLICATE_ADDRESS;
                 return false;
             }
@@ -275,7 +283,9 @@ QVariant AddressTableModel::headerData(int section, Qt::Orientation orientation,
 }
 
 Qt::ItemFlags AddressTableModel::flags(const QModelIndex &index) const {
-    if (!index.isValid()) return 0;
+    if (!index.isValid()) {
+        return 0;
+    }
     AddressTableEntry *rec =
         static_cast<AddressTableEntry *>(index.internalPointer());
 
@@ -309,7 +319,8 @@ void AddressTableModel::updateEntry(const QString &address,
 }
 
 QString AddressTableModel::addRow(const QString &type, const QString &label,
-                                  const QString &address) {
+                                  const QString &address,
+                                  const OutputType address_type) {
     std::string strLabel = label.toStdString();
     std::string strAddress = address.toStdString();
 
@@ -322,7 +333,9 @@ QString AddressTableModel::addRow(const QString &type, const QString &label,
         }
         // Check for duplicate addresses
         if (walletModel->wallet().getAddress(
-                DecodeDestination(strAddress, walletModel->getChainParams()))) {
+                DecodeDestination(strAddress, walletModel->getChainParams()),
+                /* name= */ nullptr, /* is_mine= */ nullptr,
+                /* purpose= */ nullptr)) {
             editStatus = DUPLICATE_ADDRESS;
             return QString();
         }
@@ -343,7 +356,9 @@ QString AddressTableModel::addRow(const QString &type, const QString &label,
                 return QString();
             }
         }
-        strAddress = EncodeDestination(newKey.GetID());
+        walletModel->wallet().learnRelatedScripts(newKey, address_type);
+        strAddress = EncodeCashAddr(GetDestinationForKey(newKey, address_type),
+                                    walletModel->getChainParams());
     } else {
         return QString();
     }
@@ -370,16 +385,29 @@ bool AddressTableModel::removeRows(int row, int count,
     return true;
 }
 
-/* Look up label for address in address book, if not found return empty string.
- */
 QString AddressTableModel::labelForAddress(const QString &address) const {
-    CTxDestination destination =
-        DecodeDestination(address.toStdString(), walletModel->getChainParams());
     std::string name;
-    if (walletModel->wallet().getAddress(destination, &name)) {
+    if (getAddressData(address, &name, /* purpose= */ nullptr)) {
         return QString::fromStdString(name);
     }
     return QString();
+}
+
+QString AddressTableModel::purposeForAddress(const QString &address) const {
+    std::string purpose;
+    if (getAddressData(address, /* name= */ nullptr, &purpose)) {
+        return QString::fromStdString(purpose);
+    }
+    return QString();
+}
+
+bool AddressTableModel::getAddressData(const QString &address,
+                                       std::string *name,
+                                       std::string *purpose) const {
+    CTxDestination destination =
+        DecodeDestination(address.toStdString(), walletModel->getChainParams());
+    return walletModel->wallet().getAddress(destination, name,
+                                            /* is_mine= */ nullptr, purpose);
 }
 
 int AddressTableModel::lookupAddress(const QString &address) const {
@@ -391,6 +419,10 @@ int AddressTableModel::lookupAddress(const QString &address) const {
         return lst.at(0).row();
     }
 }
+
+OutputType AddressTableModel::GetDefaultAddressType() const {
+    return walletModel->wallet().getDefaultAddressType();
+};
 
 void AddressTableModel::emitDataChanged(int idx) {
     Q_EMIT dataChanged(index(idx, 0, QModelIndex()),

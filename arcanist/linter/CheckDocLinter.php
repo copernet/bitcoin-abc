@@ -3,7 +3,7 @@
 /**
  * Uses the check-doc.py script to enfore command line arguments documentation
  */
-final class CheckDocLinter extends ArcanistExternalLinter {
+final class CheckDocLinter extends GlobalExternalLinter {
 
   public function getInfoName() {
     return 'check-doc';
@@ -56,9 +56,9 @@ final class CheckDocLinter extends ArcanistExternalLinter {
     return array();
   }
 
-  protected function parseLinterOutput($path, $err, $stdout, $stderr) {
+  protected function parseGlobalLinterOutput($err, $stdout, $stderr) {
     /* Split stdout:
-     * 0 => Empty (before first 'Args' occurence)
+     * 0 => Empty (before first 'Args' occurrence)
      * 1 => Args used: count
      * 2 => Args documented: count
      * 3 => Args undocumented: count and list

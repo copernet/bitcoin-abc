@@ -3,36 +3,35 @@ name: "wormhole-0.2.3-linux"
 enable_cache: true
 distro: "debian"
 suites:
-- "stretch"
+- "buster"
 architectures:
 - "amd64"
 multiarch:
 - "i386"
 packages:
-- "curl"
-- "gperf"
-- "g++-aarch64-linux-gnu"
-- "gcc-aarch64-linux-gnu"
+- "autoconf"
+- "automake"
 - "binutils-aarch64-linux-gnu"
-- "g++-arm-linux-gnueabihf"
-- "gcc-arm-linux-gnueabihf"
 - "binutils-arm-linux-gnueabihf"
 - "binutils-gold"
-- "build-essential"
-- "git"
-- "pkg-config"
-- "autoconf"
-- "libtool"
-- "automake"
-- "faketime"
 - "bsdmainutils"
+- "build-essential"
 - "ca-certificates"
-- "python"
-- "lib32stdc++-6-dev"
+- "curl"
+- "faketime"
+- "g++-aarch64-linux-gnu"
+- "g++-arm-linux-gnueabihf"
+- "gcc-aarch64-linux-gnu"
+- "gcc-arm-linux-gnueabihf"
+- "git"
+- "gperf"
+- "lib32stdc++-8-dev"
 - "libc6-dev:i386"
 - "libstdc++6:i386"
 - "libdb++-dev"
-
+- "libtool"
+- "pkg-config"
+- "python3"
 remotes:
 - "url": "https://github.com/copernet/wormhole.git"
   "dir": "wormhole"
@@ -63,7 +62,7 @@ script: |
 
   function create_global_faketime_wrappers {
   for prog in ${FAKETIME_PROGS}; do
-    echo '#!/bin/bash' > ${WRAP_DIR}/${prog}
+    echo '#!/usr/bin/env bash' > ${WRAP_DIR}/${prog}
     echo "REAL=\`which -a ${prog} | grep -v ${WRAP_DIR}/${prog} | head -1\`" >> ${WRAP_DIR}/${prog}
     echo 'export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1' >> ${WRAP_DIR}/${prog}
     echo "export FAKETIME=\"$1\"" >> ${WRAP_DIR}/${prog}
@@ -75,7 +74,7 @@ script: |
   function create_per-host_faketime_wrappers {
   for i in $HOSTS; do
     for prog in ${FAKETIME_HOST_PROGS}; do
-        echo '#!/bin/bash' > ${WRAP_DIR}/${i}-${prog}
+        echo '#!/usr/bin/env bash' > ${WRAP_DIR}/${i}-${prog}
         echo "REAL=\`which -a ${i}-${prog} | grep -v ${WRAP_DIR}/${i}-${prog} | head -1\`" >> ${WRAP_DIR}/${i}-${prog}
         echo 'export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1' >> ${WRAP_DIR}/${i}-${prog}
         echo "export FAKETIME=\"$1\"" >> ${WRAP_DIR}/${i}-${prog}
@@ -124,12 +123,7 @@ script: |
   BASEPREFIX=`pwd`/depends
   # Build dependencies for each host
   for i in $HOSTS; do
-    EXTRA_INCLUDES="$EXTRA_INCLUDES_BASE/$i"
-    if [ -d "$EXTRA_INCLUDES" ]; then
-      export HOST_ID_SALT="$EXTRA_INCLUDES"
-    fi
     make ${MAKEOPTS} -C ${BASEPREFIX} HOST="${i}"
-    unset HOST_ID_SALT
   done
 
   # Faketime for binaries
@@ -169,17 +163,7 @@ script: |
     CONFIG_SITE=${BASEPREFIX}/${i}/share/config.site ./configure --prefix=/ --disable-ccache --disable-maintainer-mode --disable-dependency-tracking ${CONFIGFLAGS} CFLAGS="${HOST_CFLAGS}" CXXFLAGS="${HOST_CXXFLAGS}" LDFLAGS="${HOST_LDFLAGS}"
     make ${MAKEOPTS}
     make ${MAKEOPTS} -C src check-security
-
-    #TODO: This is a quick hack that disables symbol checking for arm.
-    #      Instead, we should investigate why these are popping up.
-    #      For aarch64, we'll need to bump up the min GLIBC version, as the abi
-    #      support wasn't introduced until 2.17.
-    case $i in
-       aarch64-*) : ;;
-       arm-*) : ;;
-       *) make ${MAKEOPTS} -C src check-symbols ;;
-    esac
-
+    make ${MAKEOPTS} -C src check-symbols
     make install DESTDIR=${INSTALLPATH}
     cd installed
     find . -name "lib*.la" -delete

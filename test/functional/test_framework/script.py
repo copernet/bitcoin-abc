@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2015-2016 The Bitcoin Core developers
+# Copyright (c) 2015-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Functionality to build scripts, as well as SignatureHash().
@@ -8,10 +8,8 @@ This file is modified from python-bitcoinlib.
 """
 
 from .bignum import bn2vch
-from binascii import hexlify
 import hashlib
 import struct
-import sys
 
 from .messages import (
     CTransaction,
@@ -22,15 +20,6 @@ from .messages import (
     sha256,
     uint256_from_str,
 )
-
-bchr = chr
-bord = ord
-if sys.version > '3':
-    long = int
-
-    def bchr(x): return bytes([x])
-
-    def bord(x): return x
 
 
 MAX_SCRIPT_ELEMENT_SIZE = 520
@@ -47,15 +36,17 @@ _opcode_instances = []
 
 class CScriptOp(int):
     """A single script opcode"""
-    __slots__ = []
+    __slots__ = ()
 
     @staticmethod
     def encode_op_pushdata(d):
         """Encode a PUSHDATA op, returning bytes"""
         if len(d) < 0x4c:
-            return b'' + bchr(len(d)) + d  # OP_PUSHDATA
+            # OP_PUSHDATA
+            return b'' + bytes([len(d)]) + d
         elif len(d) <= 0xff:
-            return b'\x4c' + bchr(len(d)) + d  # OP_PUSHDATA1
+            # OP_PUSHDATA1
+            return b'\x4c' + bytes([len(d)]) + d
         elif len(d) <= 0xffff:
             return b'\x4d' + struct.pack(b'<H', len(d)) + d  # OP_PUSHDATA2
         elif len(d) <= 0xffffffff:
@@ -397,10 +388,11 @@ class CScriptTruncatedPushDataError(CScriptInvalidError):
         self.data = data
         super(CScriptTruncatedPushDataError, self).__init__(msg)
 
+
 # This is used, eg, for blockchain heights in coinbase scripts (bip34)
+class CScriptNum:
+    __slots__ = ("value",)
 
-
-class CScriptNum():
     def __init__(self, d=0):
         self.value = d
 
@@ -418,7 +410,7 @@ class CScriptNum():
             r.append(0x80 if neg else 0)
         elif neg:
             r[-1] |= 0x80
-        return bytes(bchr(len(r)) + r)
+        return bytes([len(r)]) + r
 
 
 class CScript(bytes):
@@ -431,21 +423,23 @@ class CScript(bytes):
 
     iter(script) however does iterate by opcode.
     """
+    __slots__ = ()
+
     @classmethod
     def __coerce_instance(cls, other):
         # Coerce other into bytes
         if isinstance(other, CScriptOp):
-            other = bchr(other)
+            other = bytes([other])
         elif isinstance(other, CScriptNum):
             if (other.value == 0):
-                other = bchr(CScriptOp(OP_0))
+                other = bytes([CScriptOp(OP_0)])
             else:
                 other = CScriptNum.encode(other)
         elif isinstance(other, int):
             if 0 <= other <= 16:
-                other = bytes(bchr(CScriptOp.encode_op_n(other)))
+                other = bytes([CScriptOp.encode_op_n(other)])
             elif other == -1:
-                other = bytes(bchr(OP_1NEGATE))
+                other = bytes([OP_1NEGATE])
             else:
                 other = CScriptOp.encode_op_pushdata(bn2vch(other))
         elif isinstance(other, (bytes, bytearray)):
@@ -489,7 +483,7 @@ class CScript(bytes):
         i = 0
         while i < len(self):
             sop_idx = i
-            opcode = bord(self[i])
+            opcode = self[i]
             i += 1
 
             if opcode > OP_PUSHDATA4:
@@ -506,7 +500,7 @@ class CScript(bytes):
                     if i >= len(self):
                         raise CScriptInvalidError(
                             'PUSHDATA1: missing data length')
-                    datasize = bord(self[i])
+                    datasize = self[i]
                     i += 1
 
                 elif opcode == OP_PUSHDATA2:
@@ -514,7 +508,7 @@ class CScript(bytes):
                     if i + 1 >= len(self):
                         raise CScriptInvalidError(
                             'PUSHDATA2: missing data length')
-                    datasize = bord(self[i]) + (bord(self[i + 1]) << 8)
+                    datasize = self[i] + (self[i + 1] << 8)
                     i += 2
 
                 elif opcode == OP_PUSHDATA4:
@@ -522,8 +516,8 @@ class CScript(bytes):
                     if i + 3 >= len(self):
                         raise CScriptInvalidError(
                             'PUSHDATA4: missing data length')
-                    datasize = bord(self[i]) + (bord(self[i + 1]) << 8) + \
-                        (bord(self[i + 2]) << 16) + (bord(self[i + 3]) << 24)
+                    datasize = self[i] + (self[i + 1] << 8) + \
+                        (self[i + 2] << 16) + (self[i + 3] << 24)
                     i += 4
 
                 else:
@@ -561,11 +555,9 @@ class CScript(bytes):
                     yield CScriptOp(opcode)
 
     def __repr__(self):
-        # For Python3 compatibility add b before strings so testcases don't
-        # need to change
         def _repr(o):
             if isinstance(o, bytes):
-                return "x('{}')".format(hexlify(o).decode('ascii')).encode()
+                return "x('{}')".format(o.hex())
             else:
                 return repr(o)
 
@@ -688,8 +680,6 @@ def SignatureHash(script, txTo, inIdx, hashtype):
 
 # TODO: Allow cached hashPrevouts/hashSequence/hashOutputs to be provided.
 # Performance optimization probably not necessary for python tests, however.
-# Note that this corresponds to sigversion == 1 in EvalScript, which is used
-# for version 0 witnesses.
 
 
 def SignatureHashForkId(script, txTo, inIdx, hashtype, amount):

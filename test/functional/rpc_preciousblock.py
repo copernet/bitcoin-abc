@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-# Copyright (c) 2015-2016 The Bitcoin Core developers
+# Copyright (c) 2015-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
-#
-# Test PreciousBlock code
-#
+"""Test the preciousblock RPC."""
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     connect_nodes_bi,
-    sync_chain,
     sync_blocks,
 )
 
@@ -21,7 +17,7 @@ def unidirectional_node_sync_via_rpc(node_src, node_dest):
     blockhash = node_src.getbestblockhash()
     while True:
         try:
-            assert(len(node_dest.getblock(blockhash, False)) > 0)
+            assert len(node_dest.getblock(blockhash, False)) > 0
             break
         except:
             blocks_to_copy.append(blockhash)
@@ -30,7 +26,7 @@ def unidirectional_node_sync_via_rpc(node_src, node_dest):
     blocks_to_copy.reverse()
     for blockhash in blocks_to_copy:
         blockdata = node_src.getblock(blockhash, False)
-        assert(node_dest.submitblock(blockdata) in (None, 'inconclusive'))
+        assert node_dest.submitblock(blockdata) in (None, 'inconclusive')
 
 
 def node_sync_via_rpc(nodes):
@@ -67,7 +63,7 @@ class PreciousTest(BitcoinTestFramework):
         self.log.info("Mine competing blocks E-F-G on Node 1")
         hashG = self.nodes[1].generate(3)[-1]
         assert_equal(self.nodes[1].getblockcount(), 5)
-        assert(hashC != hashG)
+        assert hashC != hashG
         self.log.info("Connect nodes and check no reorg occurs")
         # Submit competing blocks via RPC so any reorg should occur before we
         # proceed (no way to wait on inaction for p2p sync)
@@ -83,8 +79,8 @@ class PreciousTest(BitcoinTestFramework):
         assert_equal(self.nodes[0].getbestblockhash(), hashC)
         self.log.info("Make Node1 prefer block C")
         self.nodes[1].preciousblock(hashC)
-        sync_chain(self.nodes[0:2])
         # wait because node 1 may not have downloaded hashC
+        sync_blocks(self.nodes[0:2])
         assert_equal(self.nodes[1].getbestblockhash(), hashC)
         self.log.info("Make Node1 prefer block G again")
         self.nodes[1].preciousblock(hashG)

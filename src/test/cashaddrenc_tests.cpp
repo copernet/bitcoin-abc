@@ -8,6 +8,7 @@
 #include <chainparams.h>
 #include <random.h>
 #include <uint256.h>
+#include <util/strencodings.h>
 
 #include <test/test_bitcoin.h>
 

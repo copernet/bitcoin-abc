@@ -10,8 +10,6 @@
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <core_io.h>
-#include <data/tx_invalid.json.h>
-#include <data/tx_valid.json.h>
 #include <key.h>
 #include <keystore.h>
 #include <policy/policy.h>
@@ -19,9 +17,13 @@
 #include <script/script_error.h>
 #include <script/sign.h>
 #include <script/standard.h>
-#include <utilstrencodings.h>
+#include <streams.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 #include <validation.h>
 
+#include <test/data/tx_invalid.json.h>
+#include <test/data/tx_valid.json.h>
 #include <test/jsonutil.h>
 #include <test/scriptflags.h>
 #include <test/test_bitcoin.h>
@@ -36,6 +38,12 @@
 typedef std::vector<uint8_t> valtype;
 
 BOOST_FIXTURE_TEST_SUITE(transaction_tests, BasicTestingSetup)
+
+static COutPoint buildOutPoint(const UniValue &vinput) {
+    TxId txid;
+    txid.SetHex(vinput[0].get_str());
+    return COutPoint(txid, vinput[1].get_int());
+}
 
 BOOST_AUTO_TEST_CASE(tx_valid) {
     // Read tests from test/data/tx_valid.json
@@ -76,8 +84,7 @@ BOOST_AUTO_TEST_CASE(tx_valid) {
                     fValid = false;
                     break;
                 }
-                COutPoint outpoint(uint256S(vinput[0].get_str()),
-                                   vinput[1].get_int());
+                COutPoint outpoint = buildOutPoint(vinput);
                 mapprevOutScriptPubKeys[outpoint] =
                     ParseScript(vinput[2].get_str());
                 if (vinput.size() >= 4) {
@@ -131,7 +138,7 @@ BOOST_AUTO_TEST_CASE(tx_valid) {
                         TransactionSignatureChecker(&tx, i, amount, txdata),
                         &err),
                     strTest);
-                BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK,
+                BOOST_CHECK_MESSAGE(err == ScriptError::OK,
                                     ScriptErrorString(err));
             }
         }
@@ -152,7 +159,9 @@ BOOST_AUTO_TEST_CASE(tx_invalid) {
         std::string(json_tests::tx_invalid,
                     json_tests::tx_invalid + sizeof(json_tests::tx_invalid)));
 
-    ScriptError err;
+    // Initialize to ScriptError::OK. The tests expect err to be changed to a
+    // value other than ScriptError::OK.
+    ScriptError err = ScriptError::OK;
     for (size_t idx = 0; idx < tests.size(); idx++) {
         UniValue test = tests[idx];
         std::string strTest = test.write();
@@ -177,8 +186,7 @@ BOOST_AUTO_TEST_CASE(tx_invalid) {
                     fValid = false;
                     break;
                 }
-                COutPoint outpoint(uint256S(vinput[0].get_str()),
-                                   vinput[1].get_int());
+                COutPoint outpoint = buildOutPoint(vinput);
                 mapprevOutScriptPubKeys[outpoint] =
                     ParseScript(vinput[2].get_str());
                 if (vinput.size() >= 4) {
@@ -218,7 +226,7 @@ BOOST_AUTO_TEST_CASE(tx_invalid) {
                     TransactionSignatureChecker(&tx, i, amount, txdata), &err);
             }
             BOOST_CHECK_MESSAGE(!fValid, strTest);
-            BOOST_CHECK_MESSAGE(err != SCRIPT_ERR_OK, ScriptErrorString(err));
+            BOOST_CHECK_MESSAGE(err != ScriptError::OK, ScriptErrorString(err));
         }
     }
 }
@@ -331,9 +339,11 @@ BOOST_AUTO_TEST_CASE(test_Get) {
                       (50 + 21 + 22) * CENT);
 }
 
-void CreateCreditAndSpend(const CKeyStore &keystore, const CScript &outscript,
-                          CTransactionRef &output, CMutableTransaction &input,
-                          bool success = true) {
+static void CreateCreditAndSpend(const CKeyStore &keystore,
+                                 const CScript &outscript,
+                                 CTransactionRef &output,
+                                 CMutableTransaction &input,
+                                 bool success = true) {
     CMutableTransaction outputm;
     outputm.nVersion = 1;
     outputm.vin.resize(1);
@@ -369,8 +379,9 @@ void CreateCreditAndSpend(const CKeyStore &keystore, const CScript &outscript,
     BOOST_CHECK(input.vout[0] == inputm.vout[0]);
 }
 
-void CheckWithFlag(const CTransactionRef &output,
-                   const CMutableTransaction &input, int flags, bool success) {
+static void CheckWithFlag(const CTransactionRef &output,
+                          const CMutableTransaction &input, int flags,
+                          bool success) {
     ScriptError error;
     CTransaction inputi(input);
     bool ret = VerifyScript(
@@ -395,7 +406,7 @@ static CScript PushAll(const std::vector<valtype> &values) {
     return result;
 }
 
-void ReplaceRedeemScript(CScript &script, const CScript &redeemScript) {
+static void ReplaceRedeemScript(CScript &script, const CScript &redeemScript) {
     std::vector<valtype> stack;
     EvalScript(stack, script, SCRIPT_VERIFY_STRICTENC, BaseSignatureChecker());
     BOOST_CHECK(stack.size() > 0);
@@ -431,8 +442,8 @@ BOOST_AUTO_TEST_CASE(test_big_transaction) {
 
     for (size_t ij = 0; ij < OUTPUT_COUNT; ij++) {
         size_t i = mtx.vin.size();
-        uint256 prevId = uint256S(
-            "0000000000000000000000000000000000000000000000000000000000000100");
+        TxId prevId(uint256S("0000000000000000000000000000000000000000000000000"
+                             "000000000000100"));
         COutPoint outpoint(prevId, i);
 
         mtx.vin.resize(mtx.vin.size() + 1);
@@ -459,8 +470,8 @@ BOOST_AUTO_TEST_CASE(test_big_transaction) {
     CCheckQueueControl<CScriptCheck> control(&scriptcheckqueue);
 
     for (int i = 0; i < 20; i++) {
-        threadGroup.create_thread(boost::bind(
-            &CCheckQueue<CScriptCheck>::Thread, boost::ref(scriptcheckqueue)));
+        threadGroup.create_thread(std::bind(&CCheckQueue<CScriptCheck>::Thread,
+                                            std::ref(scriptcheckqueue)));
     }
 
     std::vector<Coin> coins;
@@ -486,6 +497,19 @@ BOOST_AUTO_TEST_CASE(test_big_transaction) {
 
     threadGroup.interrupt_all();
     threadGroup.join_all();
+}
+
+SignatureData CombineSignatures(const CMutableTransaction &input1,
+                                const CMutableTransaction &input2,
+                                const CTransactionRef tx) {
+    SignatureData sigdata;
+    sigdata = DataFromTransaction(input1, 0, tx->vout[0]);
+    sigdata.MergeSignatureData(DataFromTransaction(input2, 0, tx->vout[0]));
+    ProduceSignature(
+        DUMMY_SIGNING_PROVIDER,
+        MutableTransactionSignatureCreator(&input1, 0, tx->vout[0].nValue),
+        tx->vout[0].scriptPubKey, sigdata);
+    return sigdata;
 }
 
 BOOST_AUTO_TEST_CASE(test_witness) {
@@ -526,7 +550,6 @@ BOOST_AUTO_TEST_CASE(test_witness) {
 
     CTransactionRef output1, output2;
     CMutableTransaction input1, input2;
-    SignatureData sigdata;
 
     // Normal pay-to-compressed-pubkey.
     CreateCreditAndSpend(keystore, scriptPubkey1, output1, input1);
@@ -584,13 +607,7 @@ BOOST_AUTO_TEST_CASE(test_witness) {
     CreateCreditAndSpend(keystore2, scriptMulti, output2, input2, false);
     CheckWithFlag(output2, input2, 0, false);
     BOOST_CHECK(*output1 == *output2);
-    UpdateTransaction(
-        input1, 0,
-        CombineSignatures(output1->vout[0].scriptPubKey,
-                          MutableTransactionSignatureChecker(
-                              &input1, 0, output1->vout[0].nValue),
-                          DataFromTransaction(input1, 0),
-                          DataFromTransaction(input2, 0)));
+    UpdateInput(input1.vin[0], CombineSignatures(input1, input2, output1));
     CheckWithFlag(output1, input1, STANDARD_SCRIPT_VERIFY_FLAGS, true);
 
     // P2SH 2-of-2 multisig
@@ -605,13 +622,7 @@ BOOST_AUTO_TEST_CASE(test_witness) {
     CheckWithFlag(output2, input2, 0, true);
     CheckWithFlag(output2, input2, SCRIPT_VERIFY_P2SH, false);
     BOOST_CHECK(*output1 == *output2);
-    UpdateTransaction(
-        input1, 0,
-        CombineSignatures(output1->vout[0].scriptPubKey,
-                          MutableTransactionSignatureChecker(
-                              &input1, 0, output1->vout[0].nValue),
-                          DataFromTransaction(input1, 0),
-                          DataFromTransaction(input2, 0)));
+    UpdateInput(input1.vin[0], CombineSignatures(input1, input2, output1));
     CheckWithFlag(output1, input1, SCRIPT_VERIFY_P2SH, true);
     CheckWithFlag(output1, input1, STANDARD_SCRIPT_VERIFY_FLAGS, true);
 }
@@ -775,39 +786,20 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
 
 BOOST_AUTO_TEST_CASE(txsize_activation_test) {
     const Config &config = GetConfig();
+    const Consensus::Params &params = config.GetChainParams().GetConsensus();
     const int32_t magneticAnomalyActivationHeight =
-        config.GetChainParams().GetConsensus().magneticAnomalyHeight;
+        params.magneticAnomalyHeight;
 
     // A minimaly sized transction.
     CTransaction minTx;
     CValidationState state;
 
     BOOST_CHECK(ContextualCheckTransaction(
-        config, minTx, state, magneticAnomalyActivationHeight - 1, 5678, 1234));
+        params, minTx, state, magneticAnomalyActivationHeight - 1, 5678, 1234));
     BOOST_CHECK(!ContextualCheckTransaction(
-        config, minTx, state, magneticAnomalyActivationHeight, 5678, 1234));
+        params, minTx, state, magneticAnomalyActivationHeight, 5678, 1234));
     BOOST_CHECK_EQUAL(state.GetRejectCode(), REJECT_INVALID);
     BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-txns-undersize");
-}
-
-BOOST_AUTO_TEST_CASE(tx_transaction_fee) {
-    std::vector<size_t> sizes = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512};
-    for (size_t inputs : sizes) {
-        for (size_t outputs : sizes) {
-            CMutableTransaction mtx;
-            mtx.vin.resize(inputs);
-            mtx.vout.resize(outputs);
-            CTransaction tx(mtx);
-            auto txBillableSize = tx.GetBillableSize();
-            auto txSize = tx.GetTotalSize();
-            BOOST_CHECK(txBillableSize > 0);
-            if (inputs > outputs) {
-                BOOST_CHECK(txBillableSize <= txSize);
-            } else {
-                BOOST_CHECK(txBillableSize >= txSize);
-            }
-        }
-    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

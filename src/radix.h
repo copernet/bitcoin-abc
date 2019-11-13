@@ -6,7 +6,7 @@
 #define BITCOIN_RADIX_H
 
 #include <rcu.h>
-#include <util.h>
+#include <util/system.h>
 
 #include <boost/noncopyable.hpp>
 
@@ -174,8 +174,7 @@ private:
 
             // There is an element there, but it isn't a subtree. We need to
             // convert it into a subtree and resume insertion into that subtree.
-            std::unique_ptr<RadixNode> newChild =
-                std::make_unique<RadixNode>(level, leafKey, e);
+            auto newChild = std::make_unique<RadixNode>(level, leafKey, e);
             if (eptr->compare_exchange_strong(e,
                                               RadixElement(newChild.get()))) {
                 // We have a subtree, resume normal operations from there.
@@ -255,25 +254,25 @@ private:
 
     private:
         union {
-            std::array<std::atomic<RadixElement>, CHILD_PER_LEVEL> childs;
+            std::array<std::atomic<RadixElement>, CHILD_PER_LEVEL> children;
             std::array<RadixElement, CHILD_PER_LEVEL>
-                non_atomic_childs_DO_NOT_USE;
+                non_atomic_children_DO_NOT_USE;
         };
 
     public:
         RadixNode(uint32_t level, const K &key, RadixElement e)
-            : non_atomic_childs_DO_NOT_USE() {
+            : non_atomic_children_DO_NOT_USE() {
             get(level, key)->store(e);
         }
 
         ~RadixNode() {
-            for (RadixElement e : non_atomic_childs_DO_NOT_USE) {
+            for (RadixElement e : non_atomic_children_DO_NOT_USE) {
                 e.release();
             }
         }
 
         std::atomic<RadixElement> *get(uint32_t level, const K &key) {
-            return &childs[(key >> (level * BITS)) & MASK];
+            return &children[(key >> (level * BITS)) & MASK];
         }
     };
 

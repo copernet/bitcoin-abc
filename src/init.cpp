@@ -11,22 +11,25 @@
 
 #include <addrman.h>
 #include <amount.h>
+#include <banman.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <checkpoints.h>
 #include <compat/sanity.h>
 #include <config.h>
 #include <consensus/validation.h>
-#include <diskblockpos.h>
+#include <flatfile.h>
 #include <fs.h>
 #include <httprpc.h>
 #include <httpserver.h>
+#include <index/txindex.h>
 #include <key.h>
 #include <miner.h>
 #include <net.h>
 #include <net_processing.h>
 #include <netbase.h>
 #include <policy/policy.h>
+#include <rpc/blockchain.h>
 #include <rpc/register.h>
 #include <rpc/server.h>
 #include <scheduler.h>
@@ -38,8 +41,8 @@
 #include <txdb.h>
 #include <txmempool.h>
 #include <ui_interface.h>
-#include <util.h>
-#include <utilmoneystr.h>
+#include <util/moneystr.h>
+#include <util/system.h>
 #include <validation.h>
 #include <validationinterface.h>
 #include "omnicore/omnicore.h"
@@ -47,13 +50,13 @@
 #ifdef ENABLE_WALLET
 #include <wallet/rpcdump.h>
 #endif
+
 #include <walletinitinterface.h>
 #include <warnings.h>
 
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/split.hpp>
-#include <boost/bind.hpp>
 #include <boost/interprocess/sync/file_lock.hpp>
 #include <boost/thread.hpp>
 
@@ -72,25 +75,31 @@ static const bool DEFAULT_PROXYRANDOMIZE = true;
 static const bool DEFAULT_REST_ENABLE = false;
 static const bool DEFAULT_STOPAFTERBLOCKIMPORT = false;
 
+// Dump addresses to banlist.dat every 15 minutes (900s)
+static constexpr int DUMP_BANS_INTERVAL = 60 * 15;
+
 std::unique_ptr<CConnman> g_connman;
 std::unique_ptr<PeerLogicValidation> peerLogic;
+std::unique_ptr<BanMan> g_banman;
 
 #if !(ENABLE_WALLET)
 class DummyWalletInit : public WalletInitInterface {
 public:
-    std::string GetHelpString(bool showDebug) override { return std::string{}; }
-    bool ParameterInteraction() override { return true; }
-    void RegisterRPC(CRPCTable &) override {}
-    bool Verify(const CChainParams &chainParams) override { return true; }
-    bool Open(const CChainParams &chainParams) override { return true; }
-    void Start(CScheduler &scheduler) override {}
-    void Flush() override {}
-    void Stop() override {}
-    void Close() override {}
+    void AddWalletOptions() const override {}
+    bool ParameterInteraction() const override { return true; }
+    void RegisterRPC(CRPCTable &) const override {}
+    bool Verify(const CChainParams &chainParams) const override { return true; }
+    bool Open(const CChainParams &chainParams) const override {
+        LogPrintf("No wallet support compiled in!\n");
+        return true;
+    }
+    void Start(CScheduler &scheduler) const override {}
+    void Flush() const override {}
+    void Stop() const override {}
+    void Close() const override {}
 };
 
-static DummyWalletInit g_dummy_wallet_init;
-WalletInitInterface *const g_wallet_init_interface = &g_dummy_wallet_init;
+const WalletInitInterface &g_wallet_init_interface = DummyWalletInit();
 #endif
 
 #if ENABLE_ZMQ
@@ -123,16 +132,11 @@ static CZMQNotificationInterface *pzmqNotificationInterface = nullptr;
 // called to clean up database connections, and stop other threads that should
 // only be stopped after the main network-processing threads have exited.
 //
-// Note that if running -daemon the parent process returns from AppInit2 before
-// adding any threads to the threadGroup, so .join_all() returns immediately and
-// the parent exits from main().
-//
 // Shutdown for Qt is very similar, only it uses a QTimer to detect
 // fRequestShutdown getting set, and then does the normal Qt shutdown thing.
 //
 
 std::atomic<bool> fRequestShutdown(false);
-std::atomic<bool> fDumpMempoolLater(false);
 
 void StartShutdown() {
     fRequestShutdown = true;
@@ -186,6 +190,9 @@ void Interrupt() {
     if (g_connman) {
         g_connman->Interrupt();
     }
+    if (g_txindex) {
+        g_txindex->Interrupt();
+    }
 }
 
 void Shutdown() {
@@ -196,10 +203,10 @@ void Shutdown() {
         return;
     }
 
-    /// Note: Shutdown() must be able to handle cases in which AppInit2() failed
-    /// part of the way, for example if the data directory was found to be
-    /// locked. Be sure that anything that writes files or flushes caches only
-    /// does this if the respective module was initialized.
+    /// Note: Shutdown() must be able to handle cases in which initialization
+    /// failed part of the way, for example if the data directory was found to
+    /// be locked. Be sure that anything that writes files or flushes caches
+    /// only does this if the respective module was initialized.
     RenameThread("bitcoin-shutoff");
     g_mempool.AddTransactionsUpdated(1);
 
@@ -207,7 +214,7 @@ void Shutdown() {
     StopREST();
     StopRPC();
     StopHTTPServer();
-    g_wallet_init_interface->Flush();
+    g_wallet_init_interface.Flush();
     StopMapPort();
 
     // Because these depend on each-other, we make sure that neither can be
@@ -218,8 +225,9 @@ void Shutdown() {
     if (g_connman) {
         g_connman->Stop();
     }
-    peerLogic.reset();
-    g_connman.reset();
+    if (g_txindex) {
+        g_txindex->Stop();
+    }
 
     StopTorControl();
 
@@ -228,13 +236,20 @@ void Shutdown() {
     threadGroup.interrupt_all();
     threadGroup.join_all();
 
-    if (fDumpMempoolLater &&
+    // After the threads that potentially access these pointers have been
+    // stopped, destruct and reset all to nullptr.
+    peerLogic.reset();
+    g_connman.reset();
+    g_banman.reset();
+    g_txindex.reset();
+
+    if (::g_mempool.IsLoaded() &&
         gArgs.GetArg("-persistmempool", DEFAULT_PERSIST_MEMPOOL)) {
-        DumpMempool();
+        DumpMempool(::g_mempool);
     }
 
-    // FlushStateToDisk generates a SetBestChain callback, which we should avoid
-    // missing
+    // FlushStateToDisk generates a ChainStateFlushed callback, which we should
+    // avoid missing
     if (pcoinsTip != nullptr) {
         FlushStateToDisk();
     }
@@ -259,7 +274,7 @@ void Shutdown() {
         pcoinsdbview.reset();
         pblocktree.reset();
     }
-    g_wallet_init_interface->Stop();
+    g_wallet_init_interface.Stop();
 
 #if ENABLE_ZMQ
     if (pzmqNotificationInterface) {
@@ -279,36 +294,48 @@ void Shutdown() {
     UnregisterAllValidationInterfaces();
     GetMainSignals().UnregisterBackgroundSignalScheduler();
     GetMainSignals().UnregisterWithMempoolSignals(g_mempool);
-    g_wallet_init_interface->Close();
+    g_wallet_init_interface.Close();
     globalVerifyHandle.reset();
     ECC_Stop();
     LogPrintf("%s: done\n", __func__);
 }
 
 /**
- * Signal handlers are very limited in what they are allowed to do, so:
+ * Signal handlers are very limited in what they are allowed to do.
+ * The execution context the handler is invoked in is not guaranteed,
+ * so we restrict handler operations to just touching variables:
  */
-void HandleSIGTERM(int) {
+static void HandleSIGTERM(int) {
     fRequestShutdown = true;
     fReopenOmniCoreLog = true;
 }
 
-void HandleSIGHUP(int) {
+static void HandleSIGHUP(int) {
     GetLogger().m_reopen_file = true;
 }
 
-void OnRPCStarted() {
+#ifndef WIN32
+static void registerSignalHandler(int signal, void (*handler)(int)) {
+    struct sigaction sa;
+    sa.sa_handler = handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(signal, &sa, NULL);
+}
+#endif
+
+static void OnRPCStarted() {
     uiInterface.NotifyBlockTip.connect(&RPCNotifyBlockChange);
 }
 
-void OnRPCStopped() {
+static void OnRPCStopped() {
     uiInterface.NotifyBlockTip.disconnect(&RPCNotifyBlockChange);
     RPCNotifyBlockChange(false, nullptr);
     g_best_block_cv.notify_all();
     LogPrint(BCLog::RPC, "RPC stopped.\n");
 }
 
-std::string HelpMessage(HelpMessageMode mode) {
+void SetupServerArgs() {
     const auto defaultBaseParams =
         CreateBaseChainParams(CBaseChainParams::MAIN);
     const auto testnetBaseParams =
@@ -316,130 +343,142 @@ std::string HelpMessage(HelpMessageMode mode) {
     const auto defaultChainParams = CreateChainParams(CBaseChainParams::MAIN);
     const auto testnetChainParams =
         CreateChainParams(CBaseChainParams::TESTNET);
-    const bool showDebug = gArgs.GetBoolArg("-help-debug", false);
 
+    // Set all of the args and their help
     // When adding new options to the categories, please keep and ensure
     // alphabetical ordering. Do not translate _(...) -help-debug options, Many
     // technical terms, and only a very small audience, so is unnecessary stress
     // to translators.
-    std::string strUsage = HelpMessageGroup(_("Options:"));
-    strUsage += HelpMessageOpt("-?", _("Print this help message and exit"));
-    strUsage += HelpMessageOpt("-version", _("Print version and exit"));
-    strUsage += HelpMessageOpt(
-        "-alertnotify=<cmd>",
-        _("Execute command when a relevant alert is received or we see a "
-          "really long fork (%s in cmd is replaced by message)"));
-    strUsage += HelpMessageOpt("-blocknotify=<cmd>",
-                               _("Execute command when the best block changes "
-                                 "(%s in cmd is replaced by block hash)"));
-    if (showDebug) {
-        strUsage += HelpMessageOpt(
-            "-blocksonly",
-            strprintf(
-                _("Whether to operate in a blocks only mode (default: %d)"),
-                DEFAULT_BLOCKSONLY));
-    }
-    strUsage += HelpMessageOpt(
+    gArgs.AddArg("-?", _("Print this help message and exit"), false,
+                 OptionsCategory::OPTIONS);
+    gArgs.AddArg("-version", _("Print version and exit"), false,
+                 OptionsCategory::OPTIONS);
+    gArgs.AddArg("-alertnotify=<cmd>",
+                 _("Execute command when a relevant alert is received or we "
+                   "see a really long fork (%s in cmd is replaced by message)"),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
         "-assumevalid=<hex>",
         strprintf(
             _("If this block is in the chain assume that it and its ancestors "
               "are valid and potentially skip their script verification (0 to "
               "verify all, default: %s, testnet: %s)"),
             defaultChainParams->GetConsensus().defaultAssumeValid.GetHex(),
-            testnetChainParams->GetConsensus().defaultAssumeValid.GetHex()));
-    strUsage += HelpMessageOpt(
-        "-conf=<file>", strprintf(_("Specify configuration file (default: %s)"),
-                                  BITCOIN_CONF_FILENAME));
-    if (mode == HelpMessageMode::BITCOIND) {
-#if HAVE_DECL_DAEMON
-        strUsage += HelpMessageOpt(
-            "-daemon",
-            _("Run in the background as a daemon and accept commands"));
-#endif
-    }
-    strUsage += HelpMessageOpt("-datadir=<dir>", _("Specify data directory"));
-    if (showDebug) {
-        strUsage += HelpMessageOpt(
-            "-dbbatchsize",
-            strprintf(
-                "Maximum database write batch size in bytes (default: %u)",
-                nDefaultDbBatchSize));
-    }
-    strUsage += HelpMessageOpt(
-        "-dbcache=<n>",
-        strprintf(
-            _("Set database cache size in megabytes (%d to %d, default: %d)"),
-            nMinDbCache, nMaxDbCache, nDefaultDbCache));
-    if (showDebug) {
-        strUsage += HelpMessageOpt(
-            "-feefilter", strprintf("Tell other nodes to filter invs to us by "
-                                    "our mempool min fee (default: %d)",
-                                    DEFAULT_FEEFILTER));
-    }
-    strUsage += HelpMessageOpt(
-        "-finalizationdelay=<n>",
-        strprintf("Set the minimum amount of time to wait between a "
-                  "block header reception and the block finalization. "
-                  "Unit is seconds (default: %d)",
-                  DEFAULT_MIN_FINALIZATION_DELAY));
-    strUsage += HelpMessageOpt(
-        "-maxreorgdepth=<n>",
-        strprintf("Configure at what depth blocks are considered final "
-                  "(default: %d). Use -1 to disable.",
-                  DEFAULT_MAX_REORG_DEPTH));
-    strUsage += HelpMessageOpt(
-        "-loadblock=<file>",
-        _("Imports blocks from external blk000??.dat file on startup"));
-    strUsage += HelpMessageOpt(
-        "-debuglogfile=<file>",
-        strprintf(
-            _("Specify location of debug log file: this can be an absolute "
-              "path or a path relative to the data directory (default: %s)"),
-            DEFAULT_DEBUGLOGFILE));
-    strUsage += HelpMessageOpt(
-        "-maxorphantx=<n>", strprintf(_("Keep at most <n> unconnectable "
-                                        "transactions in memory (default: %u)"),
-                                      DEFAULT_MAX_ORPHAN_TRANSACTIONS));
-    strUsage += HelpMessageOpt("-maxmempool=<n>",
-                               strprintf(_("Keep the transaction memory pool "
-                                           "below <n> megabytes (default: %u)"),
-                                         DEFAULT_MAX_MEMPOOL_SIZE));
-    strUsage +=
-        HelpMessageOpt("-mempoolexpiry=<n>",
-                       strprintf(_("Do not keep transactions in the mempool "
-                                   "longer than <n> hours (default: %u)"),
-                                 DEFAULT_MEMPOOL_EXPIRY));
-    if (showDebug) {
-        strUsage += HelpMessageOpt(
-            "-minimumchainwork=<hex>",
-            strprintf(
-                "Minimum work assumed to exist on a valid chain in hex "
-                "(default: %s, testnet: %s)",
-                defaultChainParams->GetConsensus().nMinimumChainWork.GetHex(),
-                testnetChainParams->GetConsensus().nMinimumChainWork.GetHex()));
-    }
-    strUsage +=
-        HelpMessageOpt("-persistmempool",
-                       strprintf(_("Whether to save the mempool on shutdown "
-                                   "and load on restart (default: %u)"),
-                                 DEFAULT_PERSIST_MEMPOOL));
-    strUsage += HelpMessageOpt(
+            testnetChainParams->GetConsensus().defaultAssumeValid.GetHex()),
+        false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-blocksdir=<dir>",
+                 _("Specify directory to hold blocks subdirectory for *.dat "
+                   "files (default: <datadir>)"),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-blocknotify=<cmd>",
+                 _("Execute command when the best block changes (%s in cmd is "
+                   "replaced by block hash)"),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
         "-blockreconstructionextratxn=<n>",
         strprintf(_("Extra transactions to keep in memory for compact block "
                     "reconstructions (default: %u)"),
-                  DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN));
-    strUsage += HelpMessageOpt(
+                  DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN),
+        false, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-blocksonly",
+        strprintf(_("Whether to operate in a blocks only mode (default: %d)"),
+                  DEFAULT_BLOCKSONLY),
+        true, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-conf=<file>",
+                 strprintf(_("Specify configuration file. Relative paths will "
+                             "be prefixed by datadir location. (default: %s)"),
+                           BITCOIN_CONF_FILENAME),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-datadir=<dir>", _("Specify data directory"), false,
+                 OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-dbbatchsize",
+        strprintf("Maximum database write batch size in bytes (default: %u)",
+                  nDefaultDbBatchSize),
+        true, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-dbcache=<n>",
+        strprintf(
+            _("Set database cache size in megabytes (%d to %d, default: %d)"),
+            nMinDbCache, nMaxDbCache, nDefaultDbCache),
+        false, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-debuglogfile=<file>",
+        strprintf(
+            _("Specify location of debug log file. Relative paths will be "
+              "prefixed by a net-specific datadir location. (default: %s)"),
+            DEFAULT_DEBUGLOGFILE),
+        false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-feefilter",
+                 strprintf("Tell other nodes to filter invs to us by "
+                           "our mempool min fee (default: %d)",
+                           DEFAULT_FEEFILTER),
+                 true, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-finalizationdelay=<n>",
+                 strprintf("Set the minimum amount of time to wait between a "
+                           "block header reception and the block finalization. "
+                           "Unit is seconds (default: %d)",
+                           DEFAULT_MIN_FINALIZATION_DELAY),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-includeconf=<file>",
+        _("Specify additional configuration file, relative to the -datadir "
+          "path (only useable from configuration file, not command line)"),
+        false, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-maxreorgdepth=<n>",
+        strprintf("Configure at what depth blocks are considered final "
+                  "(default: %d). Use -1 to disable.",
+                  DEFAULT_MAX_REORG_DEPTH),
+        false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-loadblock=<file>",
+                 _("Imports blocks from external blk000??.dat file on startup"),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-maxmempool=<n>",
+                 strprintf(_("Keep the transaction memory pool "
+                             "below <n> megabytes (default: %u)"),
+                           DEFAULT_MAX_MEMPOOL_SIZE),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-maxorphantx=<n>",
+                 strprintf(_("Keep at most <n> unconnectable "
+                             "transactions in memory (default: %u)"),
+                           DEFAULT_MAX_ORPHAN_TRANSACTIONS),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-mempoolexpiry=<n>",
+                 strprintf(_("Do not keep transactions in the mempool "
+                             "longer than <n> hours (default: %u)"),
+                           DEFAULT_MEMPOOL_EXPIRY),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-minimumchainwork=<hex>",
+        strprintf(
+            "Minimum work assumed to exist on a valid chain in hex "
+            "(default: %s, testnet: %s)",
+            defaultChainParams->GetConsensus().nMinimumChainWork.GetHex(),
+            testnetChainParams->GetConsensus().nMinimumChainWork.GetHex()),
+        true, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
         "-par=<n>",
         strprintf(_("Set the number of script verification threads (%u to %d, "
                     "0 = auto, <0 = leave that many cores free, default: %d)"),
                   -GetNumCores(), MAX_SCRIPTCHECK_THREADS,
-                  DEFAULT_SCRIPTCHECK_THREADS));
+                  DEFAULT_SCRIPTCHECK_THREADS),
+        false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-persistmempool",
+                 strprintf(_("Whether to save the mempool on shutdown "
+                             "and load on restart (default: %u)"),
+                           DEFAULT_PERSIST_MEMPOOL),
+                 false, OptionsCategory::OPTIONS);
 #ifndef WIN32
-    strUsage += HelpMessageOpt(
+    gArgs.AddArg(
         "-pid=<file>",
-        strprintf(_("Specify pid file (default: %s)"), BITCOIN_PID_FILENAME));
+        strprintf(_("Specify pid file. Relative paths will be prefixed by a "
+                    "net-specific datadir location. (default: %s)"),
+                  BITCOIN_PID_FILENAME),
+        false, OptionsCategory::OPTIONS);
 #endif
-    strUsage += HelpMessageOpt(
+    gArgs.AddArg(
         "-prune=<n>",
         strprintf(
             _("Reduce storage requirements by enabling pruning (deleting) of "
@@ -452,465 +491,534 @@ std::string HelpMessage(HelpMessageMode mode) {
               "(default: 0 = disable pruning blocks, 1 = allow manual pruning "
               "via RPC, >%u = automatically prune block files to stay under "
               "the specified target size in MiB)"),
-            MIN_DISK_SPACE_FOR_BLOCK_FILES / 1024 / 1024));
-    strUsage += HelpMessageOpt(
-        "-reindex-chainstate",
-        _("Rebuild chain state from the currently indexed blocks"));
-    strUsage +=
-        HelpMessageOpt("-reindex", _("Rebuild chain state and block index from "
-                                     "the blk*.dat files on disk"));
+            MIN_DISK_SPACE_FOR_BLOCK_FILES / 1024 / 1024),
+        false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-reindex-chainstate",
+                 _("Rebuild chain state from the currently indexed blocks"),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-reindex",
+                 _("Rebuild chain state and block index from the blk*.dat "
+                   "files on disk"),
+                 false, OptionsCategory::OPTIONS);
 #ifndef WIN32
-    strUsage += HelpMessageOpt(
+    gArgs.AddArg(
         "-sysperms",
         _("Create new files with system default permissions, instead of umask "
-          "077 (only effective with disabled wallet functionality)"));
+          "077 (only effective with disabled wallet functionality)"),
+        false, OptionsCategory::OPTIONS);
 #endif
-    strUsage += HelpMessageOpt(
-        "-txindex", strprintf(_("Maintain a full transaction index, used by "
-                                "the getrawtransaction rpc call (default: %d)"),
-                              DEFAULT_TXINDEX));
-    strUsage += HelpMessageOpt(
-        "-usecashaddr", _("Use Cash Address for destination encoding instead "
-                          "of base58 (activate by default on Jan, 14)"));
+    gArgs.AddArg("-txindex",
+                 strprintf(_("Maintain a full transaction index, used by the "
+                             "getrawtransaction rpc call (default: %d)"),
+                           DEFAULT_TXINDEX),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-usecashaddr",
+                 _("Use Cash Address for destination encoding instead "
+                   "of base58 (activate by default on Jan, 14)"),
+                 false, OptionsCategory::OPTIONS);
 
-    strUsage += HelpMessageGroup(_("Connection options:"));
-    strUsage += HelpMessageOpt(
+    gArgs.AddArg(
         "-addnode=<ip>",
         _("Add a node to connect to and attempt to keep the connection open "
-          "(see the `addnode` RPC command help for more info)"));
-    strUsage += HelpMessageOpt(
+          "(see the `addnode` RPC command help for more info)"),
+        false, OptionsCategory::CONNECTION);
+    gArgs.AddArg(
         "-banscore=<n>",
         strprintf(
             _("Threshold for disconnecting misbehaving peers (default: %u)"),
-            DEFAULT_BANSCORE_THRESHOLD));
-    strUsage += HelpMessageOpt(
-        "-bantime=<n>", strprintf(_("Number of seconds to keep misbehaving "
-                                    "peers from reconnecting (default: %u)"),
-                                  DEFAULT_MISBEHAVING_BANTIME));
-    strUsage += HelpMessageOpt("-bind=<addr>",
-                               _("Bind to given address and always listen on "
-                                 "it. Use [host]:port notation for IPv6"));
-    strUsage += HelpMessageOpt(
-        "-connect=<ip>", _("Connect only to the specified node(s); -connect=0 "
-                           "disables automatic connections (the rules for this "
-                           "peer are the same as for -addnode)"));
-    strUsage += HelpMessageOpt("-discover",
-                               _("Discover own IP addresses (default: 1 when "
-                                 "listening and no -externalip or -proxy)"));
-    strUsage += HelpMessageOpt(
-        "-dns", _("Allow DNS lookups for -addnode, -seednode and -connect") +
-                    " " + strprintf(_("(default: %d)"), DEFAULT_NAME_LOOKUP));
-    strUsage += HelpMessageOpt(
-        "-dnsseed", _("Query for peer addresses via DNS lookup, if low on "
-                      "addresses (default: 1 unless -connect/-noconnect)"));
-    strUsage += HelpMessageOpt("-externalip=<ip>",
-                               _("Specify your own public address"));
-    strUsage += HelpMessageOpt(
+            DEFAULT_BANSCORE_THRESHOLD),
+        false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-bantime=<n>",
+                 strprintf(_("Number of seconds to keep misbehaving peers from "
+                             "reconnecting (default: %u)"),
+                           DEFAULT_MISBEHAVING_BANTIME),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-bind=<addr>",
+                 _("Bind to given address and always listen on it. Use "
+                   "[host]:port notation for IPv6"),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-connect=<ip>",
+                 _("Connect only to the specified node(s); -connect=0 disables "
+                   "automatic connections (the rules for this peer are the "
+                   "same as for -addnode)"),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-discover",
+                 _("Discover own IP addresses (default: 1 when listening and "
+                   "no -externalip or -proxy)"),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-dns",
+                 _("Allow DNS lookups for -addnode, -seednode and -connect") +
+                     " " + strprintf(_("(default: %d)"), DEFAULT_NAME_LOOKUP),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-dnsseed",
+                 _("Query for peer addresses via DNS lookup, if low on "
+                   "addresses (default: 1 unless -connect used)"),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-enablebip61",
+                 strprintf(_("Send reject messages per BIP61 (default: %u)"),
+                           DEFAULT_ENABLE_BIP61),
+                 false, OptionsCategory::CONNECTION);
+
+    gArgs.AddArg("-externalip=<ip>", _("Specify your own public address"),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg(
         "-forcednsseed",
         strprintf(
             _("Always query for peer addresses via DNS lookup (default: %d)"),
-            DEFAULT_FORCEDNSSEED));
-    strUsage +=
-        HelpMessageOpt("-listen", _("Accept connections from outside (default: "
-                                    "1 if no -proxy or -connect/-noconnect)"));
-    strUsage += HelpMessageOpt(
+            DEFAULT_FORCEDNSSEED),
+        false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-listen",
+                 _("Accept connections from outside (default: 1 if no -proxy "
+                   "or -connect)"),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg(
         "-listenonion",
         strprintf(_("Automatically create Tor hidden service (default: %d)"),
-                  DEFAULT_LISTEN_ONION));
-    strUsage += HelpMessageOpt(
+                  DEFAULT_LISTEN_ONION),
+        false, OptionsCategory::CONNECTION);
+    gArgs.AddArg(
         "-maxconnections=<n>",
         strprintf(_("Maintain at most <n> connections to peers (default: %u)"),
-                  DEFAULT_MAX_PEER_CONNECTIONS));
-    strUsage +=
-        HelpMessageOpt("-maxreceivebuffer=<n>",
-                       strprintf(_("Maximum per-connection receive buffer, "
-                                   "<n>*1000 bytes (default: %u)"),
-                                 DEFAULT_MAXRECEIVEBUFFER));
-    strUsage += HelpMessageOpt(
-        "-maxsendbuffer=<n>", strprintf(_("Maximum per-connection send buffer, "
-                                          "<n>*1000 bytes (default: %u)"),
-                                        DEFAULT_MAXSENDBUFFER));
-    strUsage += HelpMessageOpt(
+                  DEFAULT_MAX_PEER_CONNECTIONS),
+        false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-maxreceivebuffer=<n>",
+                 strprintf(_("Maximum per-connection receive buffer, <n>*1000 "
+                             "bytes (default: %u)"),
+                           DEFAULT_MAXRECEIVEBUFFER),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-maxsendbuffer=<n>",
+                 strprintf(_("Maximum per-connection send buffer, <n>*1000 "
+                             "bytes (default: %u)"),
+                           DEFAULT_MAXSENDBUFFER),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg(
         "-maxtimeadjustment",
         strprintf(_("Maximum allowed median peer time offset adjustment. Local "
                     "perspective of time may be influenced by peers forward or "
                     "backward by this amount. (default: %u seconds)"),
-                  DEFAULT_MAX_TIME_ADJUSTMENT));
-    strUsage +=
-        HelpMessageOpt("-onion=<ip:port>",
-                       strprintf(_("Use separate SOCKS5 proxy to reach peers "
-                                   "via Tor hidden services (default: %s)"),
-                                 "-proxy"));
-    strUsage += HelpMessageOpt(
+                  DEFAULT_MAX_TIME_ADJUSTMENT),
+        false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-onion=<ip:port>",
+                 strprintf(_("Use separate SOCKS5 proxy to reach peers via Tor "
+                             "hidden services (default: %s)"),
+                           "-proxy"),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg(
         "-onlynet=<net>",
-        _("Only connect to nodes in network <net> (ipv4, ipv6 or onion)"));
-    strUsage +=
-        HelpMessageOpt("-permitbaremultisig",
-                       strprintf(_("Relay non-P2SH multisig (default: %d)"),
-                                 DEFAULT_PERMIT_BAREMULTISIG));
-    strUsage += HelpMessageOpt(
-        "-peerbloomfilters",
-        strprintf(_("Support filtering of blocks and transaction with bloom "
-                    "filters (default: %d)"),
-                  DEFAULT_PEERBLOOMFILTERS));
-    strUsage += HelpMessageOpt(
+        _("Only connect to nodes in network <net> (ipv4, ipv6 or onion)"),
+        false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-peerbloomfilters",
+                 strprintf(_("Support filtering of blocks and transaction with "
+                             "bloom filters (default: %d)"),
+                           DEFAULT_PEERBLOOMFILTERS),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-permitbaremultisig",
+                 strprintf(_("Relay non-P2SH multisig (default: %d)"),
+                           DEFAULT_PERMIT_BAREMULTISIG),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg(
         "-port=<port>",
         strprintf(
             _("Listen for connections on <port> (default: %u or testnet: %u)"),
             defaultChainParams->GetDefaultPort(),
-            testnetChainParams->GetDefaultPort()));
-    strUsage +=
-        HelpMessageOpt("-proxy=<ip:port>", _("Connect through SOCKS5 proxy"));
-    strUsage += HelpMessageOpt(
+            testnetChainParams->GetDefaultPort()),
+        false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-proxy=<ip:port>", _("Connect through SOCKS5 proxy"), false,
+                 OptionsCategory::CONNECTION);
+    gArgs.AddArg(
         "-proxyrandomize",
         strprintf(_("Randomize credentials for every proxy connection. This "
                     "enables Tor stream isolation (default: %d)"),
-                  DEFAULT_PROXYRANDOMIZE));
-    strUsage += HelpMessageOpt(
+                  DEFAULT_PROXYRANDOMIZE),
+        false, OptionsCategory::CONNECTION);
+    gArgs.AddArg(
         "-seednode=<ip>",
-        _("Connect to a node to retrieve peer addresses, and disconnect"));
-    strUsage += HelpMessageOpt(
-        "-timeout=<n>", strprintf(_("Specify connection timeout in "
-                                    "milliseconds (minimum: 1, default: %d)"),
-                                  DEFAULT_CONNECT_TIMEOUT));
-    strUsage += HelpMessageOpt("-torcontrol=<ip>:<port>",
-                               strprintf(_("Tor control port to use if onion "
-                                           "listening enabled (default: %s)"),
-                                         DEFAULT_TOR_CONTROL));
-    strUsage += HelpMessageOpt("-torpassword=<pass>",
-                               _("Tor control port password (default: empty)"));
+        _("Connect to a node to retrieve peer addresses, and disconnect"),
+        false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-timeout=<n>",
+                 strprintf(_("Specify connection timeout in milliseconds "
+                             "(minimum: 1, default: %d)"),
+                           DEFAULT_CONNECT_TIMEOUT),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-torcontrol=<ip>:<port>",
+                 strprintf(_("Tor control port to use if onion listening "
+                             "enabled (default: %s)"),
+                           DEFAULT_TOR_CONTROL),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-torpassword=<pass>",
+                 _("Tor control port password (default: empty)"), false,
+                 OptionsCategory::CONNECTION);
 #ifdef USE_UPNP
 #if USE_UPNP
-    strUsage +=
-        HelpMessageOpt("-upnp", _("Use UPnP to map the listening port "
-                                  "(default: 1 when listening and no -proxy)"));
+    gArgs.AddArg("-upnp",
+                 _("Use UPnP to map the listening port (default: 1 when "
+                   "listening and no -proxy)"),
+                 false, OptionsCategory::CONNECTION);
 #else
-    strUsage += HelpMessageOpt(
+    gArgs.AddArg(
         "-upnp",
-        strprintf(_("Use UPnP to map the listening port (default: %u)"), 0));
+        strprintf(_("Use UPnP to map the listening port (default: %u)"), 0),
+        false, OptionsCategory::CONNECTION);
 #endif
 #endif
-    strUsage +=
-        HelpMessageOpt("-whitebind=<addr>",
-                       _("Bind to given address and whitelist peers connecting "
-                         "to it. Use [host]:port notation for IPv6"));
-    strUsage += HelpMessageOpt(
-        "-whitelist=<IP address or network>",
-        _("Whitelist peers connecting from the given IP address (e.g. 1.2.3.4) "
-          "or CIDR notated network (e.g. 1.2.3.0/24). Can be specified "
-          "multiple times.") +
-            " " +
-            _("Whitelisted peers cannot be DoS banned and their transactions "
-              "are always relayed, even if they are already in the mempool, "
-              "useful e.g. for a gateway"));
-    strUsage += HelpMessageOpt(
-        "-whitelistrelay",
-        strprintf(_("Accept relayed transactions received from whitelisted "
-                    "peers even when not relaying transactions (default: %d)"),
-                  DEFAULT_WHITELISTRELAY));
-    strUsage += HelpMessageOpt(
-        "-whitelistforcerelay",
-        strprintf(_("Force relay of transactions from whitelisted peers even "
-                    "if they violate local relay policy (default: %d)"),
-                  DEFAULT_WHITELISTFORCERELAY));
-    strUsage += HelpMessageOpt(
+    gArgs.AddArg("-whitebind=<addr>",
+                 _("Bind to given address and whitelist peers connecting to "
+                   "it. Use [host]:port notation for IPv6"),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg("-whitelist=<IP address or network>",
+                 _("Whitelist peers connecting from the given IP address (e.g. "
+                   "1.2.3.4) or CIDR notated network (e.g. 1.2.3.0/24). Can be "
+                   "specified multiple times.") +
+                     " " +
+                     _("Whitelisted peers cannot be DoS banned and their "
+                       "transactions are always relayed, even if they are "
+                       "already in the mempool, useful e.g. for a gateway"),
+                 false, OptionsCategory::CONNECTION);
+    gArgs.AddArg(
         "-maxuploadtarget=<n>",
         strprintf(_("Tries to keep outbound traffic under the given target (in "
                     "MiB per 24h), 0 = no limit (default: %d)"),
-                  DEFAULT_MAX_UPLOAD_TARGET));
+                  DEFAULT_MAX_UPLOAD_TARGET),
+        false, OptionsCategory::CONNECTION);
 
-    strUsage += g_wallet_init_interface->GetHelpString(showDebug);
+    g_wallet_init_interface.AddWalletOptions();
 
 #if ENABLE_ZMQ
-    strUsage += HelpMessageGroup(_("ZeroMQ notification options:"));
-    strUsage += HelpMessageOpt("-zmqpubhashblock=<address>",
-                               _("Enable publish hash block in <address>"));
-    strUsage +=
-        HelpMessageOpt("-zmqpubhashtx=<address>",
-                       _("Enable publish hash transaction in <address>"));
-    strUsage += HelpMessageOpt("-zmqpubrawblock=<address>",
-                               _("Enable publish raw block in <address>"));
-    strUsage +=
-        HelpMessageOpt("-zmqpubrawtx=<address>",
-                       _("Enable publish raw transaction in <address>"));
+    gArgs.AddArg("-zmqpubhashblock=<address>",
+                 _("Enable publish hash block in <address>"), false,
+                 OptionsCategory::ZMQ);
+    gArgs.AddArg("-zmqpubhashtx=<address>",
+                 _("Enable publish hash transaction in <address>"), false,
+                 OptionsCategory::ZMQ);
+    gArgs.AddArg("-zmqpubrawblock=<address>",
+                 _("Enable publish raw block in <address>"), false,
+                 OptionsCategory::ZMQ);
+    gArgs.AddArg("-zmqpubrawtx=<address>",
+                 _("Enable publish raw transaction in <address>"), false,
+                 OptionsCategory::ZMQ);
 #endif
 
-    strUsage += HelpMessageGroup(_("Debugging/Testing options:"));
-    strUsage += HelpMessageOpt("-uacomment=<cmt>",
-                               _("Append comment to the user agent string"));
-    if (showDebug) {
-        strUsage += HelpMessageOpt(
-            "-checkblocks=<n>",
-            strprintf(
-                _("How many blocks to check at startup (default: %u, 0 = all)"),
-                DEFAULT_CHECKBLOCKS));
-        strUsage +=
-            HelpMessageOpt("-checklevel=<n>",
-                           strprintf(_("How thorough the block verification of "
-                                       "-checkblocks is (0-4, default: %u)"),
-                                     DEFAULT_CHECKLEVEL));
-        strUsage += HelpMessageOpt(
-            "-checkblockindex",
-            strprintf("Do a full consistency check for mapBlockIndex, "
-                      "setBlockIndexCandidates, chainActive and "
-                      "mapBlocksUnlinked occasionally. Also sets -checkmempool "
-                      "(default: %u)",
-                      defaultChainParams->DefaultConsistencyChecks()));
-        strUsage += HelpMessageOpt(
-            "-checkmempool=<n>",
-            strprintf("Run checks every <n> transactions (default: %u)",
-                      defaultChainParams->DefaultConsistencyChecks()));
-        strUsage += HelpMessageOpt(
-            "-checkpoints", strprintf("Only accept block chain matching "
-                                      "built-in checkpoints (default: %d)",
-                                      DEFAULT_CHECKPOINTS_ENABLED));
-        strUsage +=
-            HelpMessageOpt("-deprecatedrpc=<method>",
-                           "Allows deprecated RPC method(s) to be used");
-        strUsage +=
-            HelpMessageOpt("-dropmessagestest=<n>",
-                           "Randomly drop 1 of every <n> network messages");
-        strUsage += HelpMessageOpt(
-            "-stopafterblockimport",
-            strprintf(
-                "Stop running after importing blocks from disk (default: %d)",
-                DEFAULT_STOPAFTERBLOCKIMPORT));
-        strUsage += HelpMessageOpt(
-            "-stopatheight", strprintf("Stop running after reaching the given "
-                                       "height in the main chain (default: %u)",
-                                       DEFAULT_STOPATHEIGHT));
-        strUsage += HelpMessageOpt(
-            "-limitancestorcount=<n>",
-            strprintf("Do not accept transactions if number of in-mempool "
-                      "ancestors is <n> or more (default: %u)",
-                      DEFAULT_ANCESTOR_LIMIT));
-        strUsage +=
-            HelpMessageOpt("-limitancestorsize=<n>",
-                           strprintf("Do not accept transactions whose size "
-                                     "with all in-mempool ancestors exceeds "
-                                     "<n> kilobytes (default: %u)",
-                                     DEFAULT_ANCESTOR_SIZE_LIMIT));
-        strUsage += HelpMessageOpt(
-            "-limitdescendantcount=<n>",
-            strprintf("Do not accept transactions if any ancestor would have "
-                      "<n> or more in-mempool descendants (default: %u)",
-                      DEFAULT_DESCENDANT_LIMIT));
-        strUsage += HelpMessageOpt(
-            "-limitdescendantsize=<n>",
-            strprintf("Do not accept transactions if any ancestor would have "
-                      "more than <n> kilobytes of in-mempool descendants "
-                      "(default: %u).",
-                      DEFAULT_DESCENDANT_SIZE_LIMIT));
-        strUsage += HelpMessageOpt("-addrmantest",
-                                   "Allows to test address relay on localhost");
-    }
-    strUsage += HelpMessageOpt(
-        "-debug=<category>",
-        strprintf(_("Output debugging information (default: %u, supplying "
-                    "<category> is optional)"),
-                  0) +
-            ". " +
-            _("If <category> is not supplied or if <category> = 1, output all "
-              "debugging information.") +
-            _("<category> can be:") + " " + ListLogCategories() + ".");
-    strUsage += HelpMessageOpt(
+    gArgs.AddArg(
+        "-checkblocks=<n>",
+        strprintf(
+            _("How many blocks to check at startup (default: %u, 0 = all)"),
+            DEFAULT_CHECKBLOCKS),
+        true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-checklevel=<n>",
+                 strprintf(_("How thorough the block verification of "
+                             "-checkblocks is (0-4, default: %u)"),
+                           DEFAULT_CHECKLEVEL),
+                 true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
+        "-checkblockindex",
+        strprintf("Do a full consistency check for mapBlockIndex, "
+                  "setBlockIndexCandidates, chainActive and mapBlocksUnlinked "
+                  "occasionally. (default: %u)",
+                  defaultChainParams->DefaultConsistencyChecks()),
+        true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-checkmempool=<n>",
+                 strprintf("Run checks every <n> transactions (default: %u)",
+                           defaultChainParams->DefaultConsistencyChecks()),
+                 true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-checkpoints",
+                 strprintf("Only accept block chain matching built-in "
+                           "checkpoints (default: %d)",
+                           DEFAULT_CHECKPOINTS_ENABLED),
+                 true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-deprecatedrpc=<method>",
+                 "Allows deprecated RPC method(s) to be used", true,
+                 OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-dropmessagestest=<n>",
+                 "Randomly drop 1 of every <n> network messages", true,
+                 OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
+        "-stopafterblockimport",
+        strprintf("Stop running after importing blocks from disk (default: %d)",
+                  DEFAULT_STOPAFTERBLOCKIMPORT),
+        true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-stopatheight",
+                 strprintf("Stop running after reaching the given height in "
+                           "the main chain (default: %u)",
+                           DEFAULT_STOPATHEIGHT),
+                 true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-limitancestorcount=<n>",
+                 strprintf("Do not accept transactions if number of in-mempool "
+                           "ancestors is <n> or more (default: %u)",
+                           DEFAULT_ANCESTOR_LIMIT),
+                 true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
+        "-limitancestorsize=<n>",
+        strprintf("Do not accept transactions whose size with all in-mempool "
+                  "ancestors exceeds <n> kilobytes (default: %u)",
+                  DEFAULT_ANCESTOR_SIZE_LIMIT),
+        true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
+        "-limitdescendantcount=<n>",
+        strprintf("Do not accept transactions if any ancestor would have <n> "
+                  "or more in-mempool descendants (default: %u)",
+                  DEFAULT_DESCENDANT_LIMIT),
+        true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
+        "-limitdescendantsize=<n>",
+        strprintf("Do not accept transactions if any ancestor would have more "
+                  "than <n> kilobytes of in-mempool descendants (default: %u).",
+                  DEFAULT_DESCENDANT_SIZE_LIMIT),
+        true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-addrmantest", "Allows to test address relay on localhost",
+                 true, OptionsCategory::DEBUG_TEST);
+
+    gArgs.AddArg("-debug=<category>",
+                 strprintf(_("Output debugging information (default: %u, "
+                             "supplying <category> is optional)"),
+                           0) +
+                     ". " +
+                     _("If <category> is not supplied or if <category> = 1, "
+                       "output all debugging information.") +
+                     _("<category> can be:") + " " + ListLogCategories() + ".",
+                 false, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
         "-debugexclude=<category>",
         strprintf(_("Exclude debugging information for a category. Can be used "
                     "in conjunction with -debug=1 to output debug logs for all "
-                    "categories except one or more specified categories.")));
-    if (showDebug) {
-        strUsage += HelpMessageOpt(
-            "-nodebug", "Turn off debugging messages, same as -debug=0");
-    }
-    strUsage += HelpMessageOpt(
-        "-help-debug",
-        _("Show all debugging options (usage: --help -help-debug)"));
-    strUsage += HelpMessageOpt(
+                    "categories except one or more specified categories.")),
+        false, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-help-debug",
+                 _("Show all debugging options (usage: --help -help-debug)"),
+                 false, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
         "-logips",
         strprintf(_("Include IP addresses in debug output (default: %d)"),
-                  DEFAULT_LOGIPS));
-    strUsage += HelpMessageOpt(
+                  DEFAULT_LOGIPS),
+        false, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
         "-logtimestamps",
         strprintf(_("Prepend debug output with timestamp (default: %d)"),
-                  DEFAULT_LOGTIMESTAMPS));
-    if (showDebug) {
-        strUsage += HelpMessageOpt(
-            "-logtimemicros",
-            strprintf(
-                "Add microsecond precision to debug timestamps (default: %d)",
-                DEFAULT_LOGTIMEMICROS));
-        strUsage += HelpMessageOpt(
-            "-mocktime=<n>",
-            "Replace actual time with <n> seconds since epoch (default: 0)");
-        strUsage += HelpMessageOpt(
-            "-limitfreerelay=<n>",
-            strprintf("Continuously rate-limit free transactions to <n>*1000 "
-                      "bytes per minute (default: %u)",
-                      DEFAULT_LIMITFREERELAY));
-        strUsage +=
-            HelpMessageOpt("-relaypriority",
-                           strprintf("Require high priority for relaying free "
-                                     "or low-fee transactions (default: %d)",
-                                     DEFAULT_RELAYPRIORITY));
-        strUsage += HelpMessageOpt(
-            "-maxsigcachesize=<n>",
-            strprintf("Limit size of signature cache to <n> MiB (default: %u)",
-                      DEFAULT_MAX_SIG_CACHE_SIZE));
-        strUsage += HelpMessageOpt(
-            "-maxscriptcachesize=<n>",
-            strprintf("Limit size of script cache to <n> MiB (default: %u)",
-                      DEFAULT_MAX_SCRIPT_CACHE_SIZE));
-        strUsage += HelpMessageOpt(
-            "-maxtipage=<n>",
-            strprintf("Maximum tip age in seconds to consider node in initial "
-                      "block download (default: %u)",
-                      DEFAULT_MAX_TIP_AGE));
-    }
-    strUsage += HelpMessageOpt(
-        "-excessutxocharge=<amt>",
-        strprintf(_("Fees (in %s/kB) to charge per utxo created for"
-                    "relaying, and mining (default: %s)"),
-                  CURRENCY_UNIT, FormatMoney(DEFAULT_UTXO_FEE)));
-    strUsage += HelpMessageOpt(
+                  DEFAULT_LOGTIMESTAMPS),
+        false, OptionsCategory::DEBUG_TEST);
+
+    gArgs.AddArg(
+        "-logtimemicros",
+        strprintf("Add microsecond precision to debug timestamps (default: %d)",
+                  DEFAULT_LOGTIMEMICROS),
+        true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
+        "-mocktime=<n>",
+        "Replace actual time with <n> seconds since epoch (default: 0)", true,
+        OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
+        "-maxsigcachesize=<n>",
+        strprintf("Limit size of signature cache to <n> MiB (default: %u)",
+                  DEFAULT_MAX_SIG_CACHE_SIZE),
+        true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg(
+        "-maxscriptcachesize=<n>",
+        strprintf("Limit size of script cache to <n> MiB (default: %u)",
+                  DEFAULT_MAX_SCRIPT_CACHE_SIZE),
+        true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-maxtipage=<n>",
+                 strprintf("Maximum tip age in seconds to consider node in "
+                           "initial block download (default: %u)",
+                           DEFAULT_MAX_TIP_AGE),
+                 true, OptionsCategory::DEBUG_TEST);
+
+    gArgs.AddArg(
+        "-printtoconsole",
+        _("Send trace/debug info to console instead of debug.log file"), false,
+        OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-printpriority",
+                 strprintf("Log transaction priority and fee per kB when "
+                           "mining blocks (default: %d)",
+                           DEFAULT_PRINTPRIORITY),
+                 true, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-shrinkdebugfile",
+                 _("Shrink debug.log file on client startup (default: 1 when "
+                   "no -debug)"),
+                 false, OptionsCategory::DEBUG_TEST);
+
+    gArgs.AddArg("-uacomment=<cmt>",
+                 _("Append comment to the user agent string"), false,
+                 OptionsCategory::DEBUG_TEST);
+
+    SetupChainParamsBaseOptions();
+
+    gArgs.AddArg(
+        "-acceptnonstdtxn",
+        strprintf(
+            "Relay and mine \"non-standard\" transactions (%sdefault: %u)",
+            "testnet/regtest only; ", defaultChainParams->RequireStandard()),
+        true, OptionsCategory::NODE_RELAY);
+    gArgs.AddArg("-excessiveblocksize=<n>",
+                 strprintf(_("Do not accept blocks larger than this limit, in "
+                             "bytes (default: %d)"),
+                           DEFAULT_MAX_BLOCK_SIZE),
+                 true, OptionsCategory::NODE_RELAY);
+    gArgs.AddArg(
+        "-dustrelayfee=<amt>",
+        strprintf("Fee rate (in %s/kB) used to defined dust, the value of an "
+                  "output such that it will cost about 1/3 of its value in "
+                  "fees at this fee rate to spend it. (default: %s)",
+                  CURRENCY_UNIT, FormatMoney(DUST_RELAY_TX_FEE)),
+        true, OptionsCategory::NODE_RELAY);
+    gArgs.AddArg("-limitfreerelay=<n>",
+                 strprintf("Continuously rate-limit free transactions to "
+                           "<n>*1000 bytes per minute (default: %u)",
+                           DEFAULT_LIMITFREERELAY),
+                 true, OptionsCategory::NODE_RELAY);
+    gArgs.AddArg("-relaypriority",
+                 strprintf("Require high priority for relaying free or low-fee "
+                           "transactions (default: %d)",
+                           DEFAULT_RELAYPRIORITY),
+                 true, OptionsCategory::NODE_RELAY);
+
+    gArgs.AddArg("-bytespersigop",
+                 strprintf(_("Equivalent bytes per sigop in transactions for "
+                             "relay and mining (default: %u)"),
+                           DEFAULT_BYTES_PER_SIGOP),
+                 false, OptionsCategory::NODE_RELAY);
+    gArgs.AddArg(
+        "-datacarrier",
+        strprintf(_("Relay and mine data carrier transactions (default: %d)"),
+                  DEFAULT_ACCEPT_DATACARRIER),
+        false, OptionsCategory::NODE_RELAY);
+    gArgs.AddArg("-datacarriersize",
+                 strprintf(_("Maximum size of data in data carrier "
+                             "transactions we relay and mine (default: %u)"),
+                           MAX_OP_RETURN_RELAY),
+                 false, OptionsCategory::NODE_RELAY);
+    gArgs.AddArg(
         "-minrelaytxfee=<amt>",
         strprintf(
             _("Fees (in %s/kB) smaller than this are considered zero fee for "
               "relaying, mining and transaction creation (default: %s)"),
-            CURRENCY_UNIT, FormatMoney(DEFAULT_MIN_RELAY_TX_FEE_PER_KB)));
-    strUsage += HelpMessageOpt(
-        "-maxtxfee=<amt>",
-        strprintf(_("Maximum total fees (in %s) to use in a single wallet "
-                    "transaction or raw transaction; setting this too low may "
-                    "abort large transactions (default: %s)"),
-                  CURRENCY_UNIT, FormatMoney(DEFAULT_TRANSACTION_MAXFEE)));
-    strUsage += HelpMessageOpt(
-        "-printtoconsole",
-        _("Send trace/debug info to console instead of debug.log file"));
-    if (showDebug) {
-        strUsage += HelpMessageOpt(
-            "-printpriority", strprintf("Log transaction priority and fee per "
-                                        "kB when mining blocks (default: %d)",
-                                        DEFAULT_PRINTPRIORITY));
-    }
-    strUsage += HelpMessageOpt("-shrinkdebugfile",
-                               _("Shrink debug.log file on client startup "
-                                 "(default: 1 when no -debug)"));
+            CURRENCY_UNIT, FormatMoney(DEFAULT_MIN_RELAY_TX_FEE_PER_KB)),
+        false, OptionsCategory::NODE_RELAY);
+    gArgs.AddArg(
+        "-whitelistrelay",
+        strprintf(_("Accept relayed transactions received from whitelisted "
+                    "peers even when not relaying transactions (default: %d)"),
+                  DEFAULT_WHITELISTRELAY),
+        false, OptionsCategory::NODE_RELAY);
+    gArgs.AddArg(
+        "-whitelistforcerelay",
+        strprintf(_("Force relay of transactions from whitelisted peers even "
+                    "if they violate local relay policy (default: %d)"),
+                  DEFAULT_WHITELISTFORCERELAY),
+        false, OptionsCategory::NODE_RELAY);
 
-    AppendParamsHelpMessages(strUsage, showDebug);
+    // Not sure this really belongs here, but it will do for now.
+    // FIXME: This doesn't work anyways.
+    gArgs.AddArg("-excessutxocharge=<amt>",
+                 strprintf(_("Fees (in %s/kB) to charge per utxo created for "
+                             "relaying, and mining (default: %s)"),
+                           CURRENCY_UNIT, FormatMoney(DEFAULT_UTXO_FEE)),
+                 true, OptionsCategory::NODE_RELAY);
 
-    strUsage += HelpMessageGroup(_("Node relay options:"));
-    if (showDebug) {
-        strUsage += HelpMessageOpt(
-            "-acceptnonstdtxn",
-            strprintf(
-                "Relay and mine \"non-standard\" transactions (%sdefault: %u)",
-                "testnet/regtest only; ",
-                defaultChainParams->RequireStandard()));
-        strUsage +=
-            HelpMessageOpt("-excessiveblocksize=<n>",
-                           strprintf(_("Do not accept blocks larger than this "
-                                       "limit, in bytes (default: %d)"),
-                                     DEFAULT_MAX_BLOCK_SIZE));
-        strUsage += HelpMessageOpt(
-            "-dustrelayfee=<amt>",
-            strprintf("Fee rate (in %s/kB) used to defined dust, the value of "
-                      "an output such that it will cost about 1/3 of its value "
-                      "in fees at this fee rate to spend it. (default: %s)",
-                      CURRENCY_UNIT, FormatMoney(DUST_RELAY_TX_FEE)));
-    }
-    strUsage +=
-        HelpMessageOpt("-bytespersigop",
-                       strprintf(_("Equivalent bytes per sigop in transactions "
-                                   "for relay and mining (default: %u)"),
-                                 DEFAULT_BYTES_PER_SIGOP));
-    strUsage += HelpMessageOpt(
-        "-datacarrier",
-        strprintf(_("Relay and mine data carrier transactions (default: %d)"),
-                  DEFAULT_ACCEPT_DATACARRIER));
-    strUsage += HelpMessageOpt(
-        "-datacarriersize",
-        strprintf(_("Maximum size of data in data carrier transactions we "
-                    "relay and mine (default: %u)"),
-                  MAX_OP_RETURN_RELAY));
-
-    strUsage += HelpMessageGroup(_("Block creation options:"));
-    strUsage += HelpMessageOpt(
-        "-blockmaxsize=<n>",
-        strprintf(_("Set maximum block size in bytes (default: %d)"),
-                  DEFAULT_MAX_GENERATED_BLOCK_SIZE));
-    strUsage += HelpMessageOpt(
+    gArgs.AddArg("-blockmaxsize=<n>",
+                 strprintf(_("Set maximum block size in bytes (default: %d)"),
+                           DEFAULT_MAX_GENERATED_BLOCK_SIZE),
+                 false, OptionsCategory::BLOCK_CREATION);
+    gArgs.AddArg(
         "-blockprioritypercentage=<n>",
         strprintf(_("Set maximum percentage of a block reserved to "
                     "high-priority/low-fee transactions (default: %d)"),
-                  DEFAULT_BLOCK_PRIORITY_PERCENTAGE));
-    strUsage += HelpMessageOpt(
+                  DEFAULT_BLOCK_PRIORITY_PERCENTAGE),
+        false, OptionsCategory::BLOCK_CREATION);
+    gArgs.AddArg(
         "-blockmintxfee=<amt>",
         strprintf(_("Set lowest fee rate (in %s/kB) for transactions to be "
                     "included in block creation. (default: %s)"),
-                  CURRENCY_UNIT, FormatMoney(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB)));
-    if (showDebug) {
-        strUsage +=
-            HelpMessageOpt("-blockversion=<n>",
-                           "Override block version to test forking scenarios");
-    }
+                  CURRENCY_UNIT, FormatMoney(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB)),
+        false, OptionsCategory::BLOCK_CREATION);
 
-    strUsage += HelpMessageGroup(_("RPC server options:"));
-    strUsage += HelpMessageOpt("-server",
-                               _("Accept command line and JSON-RPC commands"));
-    strUsage += HelpMessageOpt(
-        "-rest", strprintf(_("Accept public REST requests (default: %d)"),
-                           DEFAULT_REST_ENABLE));
-    strUsage += HelpMessageOpt(
-        "-rpcbind=<addr>",
-        _("Bind to given address to listen for JSON-RPC connections. Use "
-          "[host]:port notation for IPv6. This option can be specified "
-          "multiple times (default: bind to all interfaces)"));
-    strUsage +=
-        HelpMessageOpt("-rpccookiefile=<loc>",
-                       _("Location of the auth cookie (default: data dir)"));
-    strUsage += HelpMessageOpt("-rpcuser=<user>",
-                               _("Username for JSON-RPC connections"));
-    strUsage += HelpMessageOpt("-rpcpassword=<pw>",
-                               _("Password for JSON-RPC connections"));
-    strUsage += HelpMessageOpt(
+    gArgs.AddArg("-blockversion=<n>",
+                 "Override block version to test forking scenarios", true,
+                 OptionsCategory::BLOCK_CREATION);
+
+    gArgs.AddArg("-server", _("Accept command line and JSON-RPC commands"),
+                 false, OptionsCategory::RPC);
+    gArgs.AddArg("-rest",
+                 strprintf(_("Accept public REST requests (default: %d)"),
+                           DEFAULT_REST_ENABLE),
+                 false, OptionsCategory::RPC);
+    gArgs.AddArg(
+        "-rpcbind=<addr>[:port]",
+        _("Bind to given address to listen for JSON-RPC connections. This "
+          "option is ignored unless -rpcallowip is also passed. Port is "
+          "optional and overrides -rpcport. Use [host]:port notation for IPv6. "
+          "This option can be specified multiple times (default: 127.0.0.1 and "
+          "::1 i.e., localhost, or if -rpcallowip has been specified, 0.0.0.0 "
+          "and :: i.e., all addresses)"),
+        false, OptionsCategory::RPC);
+    gArgs.AddArg(
+        "-rpccookiefile=<loc>",
+        _("Location of the auth cookie. Relative paths will be prefixed by a "
+          "net-specific datadir location. (default: data dir)"),
+        false, OptionsCategory::RPC);
+    gArgs.AddArg("-rpcuser=<user>", _("Username for JSON-RPC connections"),
+                 false, OptionsCategory::RPC);
+    gArgs.AddArg("-rpcpassword=<pw>", _("Password for JSON-RPC connections"),
+                 false, OptionsCategory::RPC);
+    gArgs.AddArg(
         "-rpcauth=<userpw>",
         _("Username and hashed password for JSON-RPC connections. The field "
           "<userpw> comes in the format: <USERNAME>:<SALT>$<HASH>. A canonical "
           "python script is included in share/rpcuser. The client then "
           "connects normally using the "
           "rpcuser=<USERNAME>/rpcpassword=<PASSWORD> pair of arguments. This "
-          "option can be specified multiple times"));
-    strUsage += HelpMessageOpt(
+          "option can be specified multiple times"),
+        false, OptionsCategory::RPC);
+    gArgs.AddArg(
         "-rpcport=<port>",
         strprintf(_("Listen for JSON-RPC connections on <port> (default: %u or "
                     "testnet: %u)"),
-                  defaultBaseParams->RPCPort(), testnetBaseParams->RPCPort()));
-    strUsage += HelpMessageOpt(
-        "-rpcallowip=<ip>",
-        _("Allow JSON-RPC connections from specified source. Valid for <ip> "
-          "are a single IP (e.g. 1.2.3.4), a network/netmask (e.g. "
-          "1.2.3.4/255.255.255.0) or a network/CIDR (e.g. 1.2.3.4/24). This "
-          "option can be specified multiple times"));
-    strUsage += HelpMessageOpt(
+                  defaultBaseParams->RPCPort(), testnetBaseParams->RPCPort()),
+        false, OptionsCategory::RPC);
+    gArgs.AddArg("-rpcallowip=<ip>",
+                 _("Allow JSON-RPC connections from specified source. Valid "
+                   "for <ip> are a single IP (e.g. 1.2.3.4), a network/netmask "
+                   "(e.g. 1.2.3.4/255.255.255.0) or a network/CIDR (e.g. "
+                   "1.2.3.4/24). This option can be specified multiple times"),
+                 false, OptionsCategory::RPC);
+    gArgs.AddArg(
         "-rpcthreads=<n>",
         strprintf(
             _("Set the number of threads to service RPC calls (default: %d)"),
-            DEFAULT_HTTP_THREADS));
-    strUsage += HelpMessageOpt(
+            DEFAULT_HTTP_THREADS),
+        false, OptionsCategory::RPC);
+    gArgs.AddArg(
         "-rpccorsdomain=value",
-        "Domain from which to accept cross origin requests (browser enforced)");
-    if (showDebug) {
-        strUsage += HelpMessageOpt(
-            "-rpcworkqueue=<n>", strprintf("Set the depth of the work queue to "
-                                           "service RPC calls (default: %d)",
-                                           DEFAULT_HTTP_WORKQUEUE));
-        strUsage += HelpMessageOpt(
-            "-rpcservertimeout=<n>",
-            strprintf("Timeout during HTTP requests (default: %d)",
-                      DEFAULT_HTTP_SERVER_TIMEOUT));
-    }
+        "Domain from which to accept cross origin requests (browser enforced)",
+        false, OptionsCategory::RPC);
 
-    return strUsage;
+    gArgs.AddArg("-rpcworkqueue=<n>",
+                 strprintf("Set the depth of the work queue to service RPC "
+                           "calls (default: %d)",
+                           DEFAULT_HTTP_WORKQUEUE),
+                 true, OptionsCategory::RPC);
+    gArgs.AddArg("-rpcservertimeout=<n>",
+                 strprintf("Timeout during HTTP requests (default: %d)",
+                           DEFAULT_HTTP_SERVER_TIMEOUT),
+                 true, OptionsCategory::RPC);
+
+    // Hidden options
+    gArgs.AddArg("-rpcssl", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-benchmark", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-h", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-help", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-socks", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-tor", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-debugnet", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-whitelistalwaysrelay", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-blockminsize", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-dbcrashratio", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-forcecompactdb", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-usehd", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-parkdeepreorg", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-replayprotectionactivationtime", "", false,
+                 OptionsCategory::HIDDEN);
+
+    // TODO remove after the Nov 2019 upgrade
+    gArgs.AddArg("-gravitonactivationtime", "", false, OptionsCategory::HIDDEN);
 }
 
 std::string LicenseInfo() {
@@ -957,16 +1065,16 @@ static void BlockNotifyCallback(bool initialSync,
 }
 
 static bool fHaveGenesis = false;
-static CWaitableCriticalSection cs_GenesisWait;
-static CConditionVariable condvar_GenesisWait;
+static Mutex g_genesis_wait_mutex;
+static std::condition_variable g_genesis_wait_cv;
 
 static void BlockNotifyGenesisWait(bool, const CBlockIndex *pBlockIndex) {
     if (pBlockIndex != nullptr) {
         {
-            LOCK(cs_GenesisWait);
+            LOCK(g_genesis_wait_mutex);
             fHaveGenesis = true;
         }
-        condvar_GenesisWait.notify_all();
+        g_genesis_wait_cv.notify_all();
     }
 }
 
@@ -989,7 +1097,7 @@ struct CImportingNow {
 // rewritten by the reindex anyway. This ensures that vinfoBlockFile is in sync
 // with what's actually on disk by the time we start downloading, so that
 // pruning works correctly.
-void CleanupBlockRevFiles() {
+static void CleanupBlockRevFiles() {
     std::map<std::string, fs::path> mapBlockFiles;
 
     // Glob all blk?????.dat and rev?????.dat files from the blocks directory.
@@ -997,10 +1105,10 @@ void CleanupBlockRevFiles() {
     // ordered map keyed by block file index.
     LogPrintf("Removing unusable blk?????.dat and rev?????.dat files for "
               "-reindex with -prune\n");
-    fs::path blocksdir = GetDataDir() / "blocks";
+    fs::path blocksdir = GetBlocksDir();
     for (fs::directory_iterator it(blocksdir); it != fs::directory_iterator();
          it++) {
-        if (is_regular_file(*it) &&
+        if (fs::is_regular_file(*it) &&
             it->path().filename().string().length() == 12 &&
             it->path().filename().string().substr(8, 4) == ".dat") {
             if (it->path().filename().string().substr(0, 3) == "blk") {
@@ -1017,7 +1125,7 @@ void CleanupBlockRevFiles() {
     // a separate counter. Once we hit a gap (or if 0 doesn't exist) start
     // removing block files.
     int nContigCounter = 0;
-    for (const std::pair<std::string, fs::path> &item : mapBlockFiles) {
+    for (const std::pair<const std::string, fs::path> &item : mapBlockFiles) {
         if (atoi(item.first) == nContigCounter) {
             nContigCounter++;
             continue;
@@ -1026,8 +1134,10 @@ void CleanupBlockRevFiles() {
     }
 }
 
-void ThreadImport(const Config &config, std::vector<fs::path> vImportFiles) {
+static void ThreadImport(const Config &config,
+                         std::vector<fs::path> vImportFiles) {
     RenameThread("bitcoin-loadblk");
+    ScheduleBatchPriority();
 
     {
         CImportingNow imp;
@@ -1036,8 +1146,8 @@ void ThreadImport(const Config &config, std::vector<fs::path> vImportFiles) {
         if (fReindex) {
             int nFile = 0;
             while (true) {
-                CDiskBlockPos pos(nFile, 0);
-                if (!fs::exists(GetBlockPosFilename(pos, "blk"))) {
+                FlatFilePos pos(nFile, 0);
+                if (!fs::exists(GetBlockPosFilename(pos))) {
                     // No block files left to reindex
                     break;
                 }
@@ -1090,27 +1200,30 @@ void ThreadImport(const Config &config, std::vector<fs::path> vImportFiles) {
         // connected in the active best chain
         CValidationState state;
         if (!ActivateBestChain(config, state)) {
-            LogPrintf("Failed to connect best block");
+            LogPrintf("Failed to connect best block (%s)\n",
+                      FormatStateMessage(state));
             StartShutdown();
+            return;
         }
 
         if (gArgs.GetBoolArg("-stopafterblockimport",
                              DEFAULT_STOPAFTERBLOCKIMPORT)) {
             LogPrintf("Stopping after block import\n");
             StartShutdown();
+            return;
         }
     } // End scope of CImportingNow
     if (gArgs.GetArg("-persistmempool", DEFAULT_PERSIST_MEMPOOL)) {
-        LoadMempool(config);
-        fDumpMempoolLater = !fRequestShutdown;
+        LoadMempool(config, ::g_mempool);
     }
+    ::g_mempool.SetIsLoaded(!fRequestShutdown);
 }
 
 /** Sanity checks
  *  Ensure that Bitcoin is running in a usable environment with all
  *  necessary library support.
  */
-bool InitSanityCheck(void) {
+static bool InitSanityCheck() {
     if (!ECC_InitSanityCheck()) {
         InitError(
             "Elliptic curve cryptography sanity check failure. Aborting.");
@@ -1136,18 +1249,17 @@ static bool AppInitServers(Config &config,
     if (!InitHTTPServer(config)) {
         return false;
     }
-    if (!StartRPC()) {
-        return false;
-    }
+
+    StartRPC();
+
     if (!StartHTTPRPC(config, httpRPCRequestProcessor)) {
         return false;
     }
     if (gArgs.GetBoolArg("-rest", DEFAULT_REST_ENABLE) && !StartREST()) {
         return false;
     }
-    if (!StartHTTPServer()) {
-        return false;
-    }
+
+    StartHTTPServer();
     return true;
 }
 
@@ -1308,8 +1420,6 @@ bool AppInitBasicSetup() {
     _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_WARN, CreateFileA("NUL", GENERIC_WRITE, 0, nullptr,
                                              OPEN_EXISTING, 0, 0));
-#endif
-#if _MSC_VER >= 1400
     // Disable confusing "helpful" text message on abort, Ctrl-C
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
@@ -1341,19 +1451,11 @@ bool AppInitBasicSetup() {
     }
 
     // Clean shutdown on SIGTERM
-    struct sigaction sa;
-    sa.sa_handler = HandleSIGTERM;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(SIGTERM, &sa, nullptr);
-    sigaction(SIGINT, &sa, nullptr);
+    registerSignalHandler(SIGTERM, HandleSIGTERM);
+    registerSignalHandler(SIGINT, HandleSIGTERM);
 
     // Reopen debug.log on SIGHUP
-    struct sigaction sa_hup;
-    sa_hup.sa_handler = HandleSIGHUP;
-    sigemptyset(&sa_hup.sa_mask);
-    sa_hup.sa_flags = 0;
-    sigaction(SIGHUP, &sa_hup, nullptr);
+    registerSignalHandler(SIGHUP, HandleSIGHUP);
 
     // Ignore SIGPIPE, otherwise it will bring the daemon down if the client
     // closes unexpectedly
@@ -1365,11 +1467,17 @@ bool AppInitBasicSetup() {
     return true;
 }
 
-bool AppInitParameterInteraction(Config &config, RPCServer &rpcServer) {
+bool AppInitParameterInteraction(Config &config) {
     const CChainParams &chainparams = config.GetChainParams();
     // Step 2: parameter interactions
 
     // also see: InitParameterInteraction()
+
+    if (!fs::is_directory(GetBlocksDir())) {
+        return InitError(
+            strprintf(_("Specified blocks directory \"%s\" does not exist.\n"),
+                      gArgs.GetArg("-blocksdir", "").c_str()));
+    }
 
     // if using block pruning, then disallow txindex
     if (gArgs.GetArg("-prune", 0)) {
@@ -1403,9 +1511,9 @@ bool AppInitParameterInteraction(Config &config, RPCServer &rpcServer) {
 
     // Trim requested connection counts, to fit into system limitations
     nMaxConnections =
-        std::max(std::min(nMaxConnections,
-                          (int)(FD_SETSIZE - nBind - MIN_CORE_FILEDESCRIPTORS -
-                                MAX_ADDNODE_CONNECTIONS)),
+        std::max(std::min(nMaxConnections, FD_SETSIZE - nBind -
+                                               MIN_CORE_FILEDESCRIPTORS -
+                                               MAX_ADDNODE_CONNECTIONS),
                  0);
     nFD = RaiseFileDescriptorLimit(nMaxConnections + MIN_CORE_FILEDESCRIPTORS +
                                    MAX_ADDNODE_CONNECTIONS);
@@ -1427,14 +1535,16 @@ bool AppInitParameterInteraction(Config &config, RPCServer &rpcServer) {
         // Special-case: if -debug=0/-nodebug is set, turn off debugging
         // messages
         const std::vector<std::string> &categories = gArgs.GetArgs("-debug");
-        if (find(categories.begin(), categories.end(), std::string("0")) ==
-            categories.end()) {
+        if (std::none_of(
+                categories.begin(), categories.end(),
+                [](std::string cat) { return cat == "0" || cat == "none"; })) {
             for (const auto &cat : categories) {
-                BCLog::LogFlags flag;
+                BCLog::LogFlags flag = BCLog::NONE;
                 if (!GetLogCategory(flag, cat)) {
                     InitWarning(
                         strprintf(_("Unsupported logging category %s=%s."),
                                   "-debug", cat));
+                    continue;
                 }
                 GetLogger().EnableCategory(flag);
             }
@@ -1443,10 +1553,11 @@ bool AppInitParameterInteraction(Config &config, RPCServer &rpcServer) {
 
     // Now remove the logging categories which were explicitly excluded
     for (const std::string &cat : gArgs.GetArgs("-debugexclude")) {
-        BCLog::LogFlags flag;
+        BCLog::LogFlags flag = BCLog::NONE;
         if (!GetLogCategory(flag, cat)) {
             InitWarning(strprintf(_("Unsupported logging category %s=%s."),
                                   "-debugexclude", cat));
+            continue;
         }
         GetLogger().DisableCategory(flag);
     }
@@ -1598,12 +1709,6 @@ bool AppInitParameterInteraction(Config &config, RPCServer &rpcServer) {
         fPruneMode = true;
     }
 
-    RegisterAllRPCCommands(config, rpcServer, tableRPC);
-    g_wallet_init_interface->RegisterRPC(tableRPC);
-#ifdef ENABLE_WALLET
-    RegisterDumpRPCCommands(tableRPC);
-#endif
-
     nConnectTimeout = gArgs.GetArg("-timeout", DEFAULT_CONNECT_TIMEOUT);
     if (nConnectTimeout <= 0) {
         nConnectTimeout = DEFAULT_CONNECT_TIMEOUT;
@@ -1622,21 +1727,15 @@ bool AppInitParameterInteraction(Config &config, RPCServer &rpcServer) {
         config.SetExcessUTXOCharge(DEFAULT_UTXO_FEE);
     }
 
-    // Fee-per-kilobyte amount considered the same as "free". If you are mining,
-    // be careful setting this: if you set it to zero then a transaction spammer
-    // can cheaply fill blocks using 1-satoshi-fee transactions. It should be
-    // set above the real cost to you of processing a transaction.
     if (gArgs.IsArgSet("-minrelaytxfee")) {
         Amount n = Amount::zero();
         auto parsed = ParseMoney(gArgs.GetArg("-minrelaytxfee", ""), n);
-        if (!parsed || Amount::zero() == n) {
+        if (!parsed || n == Amount::zero()) {
             return InitError(AmountErrMsg("minrelaytxfee",
                                           gArgs.GetArg("-minrelaytxfee", "")));
         }
         // High fee check is done afterward in WalletParameterInteraction()
-        config.SetMinFeePerKB(CFeeRate(n));
-    } else {
-        config.SetMinFeePerKB(CFeeRate(DEFAULT_MIN_RELAY_TX_FEE_PER_KB));
+        ::minRelayTxFee = CFeeRate(n);
     }
 
     // Sanity check argument for min fee for including tx in block
@@ -1671,7 +1770,7 @@ bool AppInitParameterInteraction(Config &config, RPCServer &rpcServer) {
     }
     nBytesPerSigOp = gArgs.GetArg("-bytespersigop", nBytesPerSigOp);
 
-    if (!g_wallet_init_interface->ParameterInteraction()) {
+    if (!g_wallet_init_interface.ParameterInteraction()) {
         return false;
     }
 
@@ -1749,7 +1848,7 @@ bool AppInitLockDataDirectory() {
     return true;
 }
 
-bool AppInitMain(Config &config,
+bool AppInitMain(Config &config, RPCServer &rpcServer,
                  HTTPRPCRequestProcessor &httpRPCRequestProcessor) {
     // Step 4a: application initialization
     const CChainParams &chainparams = config.GetChainParams();
@@ -1812,12 +1911,19 @@ bool AppInitMain(Config &config,
 
     // Start the lightweight task scheduler thread
     CScheduler::Function serviceLoop =
-        boost::bind(&CScheduler::serviceQueue, &scheduler);
-    threadGroup.create_thread(boost::bind(&TraceThread<CScheduler::Function>,
-                                          "scheduler", serviceLoop));
+        std::bind(&CScheduler::serviceQueue, &scheduler);
+    threadGroup.create_thread(std::bind(&TraceThread<CScheduler::Function>,
+                                        "scheduler", serviceLoop));
 
     GetMainSignals().RegisterBackgroundSignalScheduler(scheduler);
     GetMainSignals().RegisterWithMempoolSignals(g_mempool);
+
+    /**
+     * Register RPC commands regardless of -server setting so they will be
+     * available in the GUI RPC console even if external calls are disabled.
+     */
+    RegisterAllRPCCommands(config, rpcServer, tableRPC);
+    g_wallet_init_interface.RegisterRPC(tableRPC);
 
     /**
      * Start the RPC server.  It will be started in "warmup" mode and not
@@ -1834,7 +1940,7 @@ bool AppInitMain(Config &config,
     }
 
     // Step 5: verify wallet database integrity
-    if (!g_wallet_init_interface->Verify(chainparams)) {
+    if (!g_wallet_init_interface.Verify(chainparams)) {
         return false;
     }
 
@@ -1845,13 +1951,18 @@ bool AppInitMain(Config &config,
     // is not yet setup and may end up being set up twice if we
     // need to reindex later.
 
+    assert(!g_banman);
+    g_banman = std::make_unique<BanMan>(
+        GetDataDir() / "banlist.dat", config.GetChainParams(), &uiInterface,
+        gArgs.GetArg("-bantime", DEFAULT_MISBEHAVING_BANTIME));
     assert(!g_connman);
-    g_connman = std::unique_ptr<CConnman>(
-        new CConnman(config, GetRand(std::numeric_limits<uint64_t>::max()),
-                     GetRand(std::numeric_limits<uint64_t>::max())));
-    CConnman &connman = *g_connman;
+    g_connman = std::make_unique<CConnman>(
+        config, GetRand(std::numeric_limits<uint64_t>::max()),
+        GetRand(std::numeric_limits<uint64_t>::max()));
 
-    peerLogic.reset(new PeerLogicValidation(&connman, scheduler));
+    peerLogic.reset(new PeerLogicValidation(
+        g_connman.get(), g_banman.get(), scheduler,
+        gArgs.GetBoolArg("-enablebip61", DEFAULT_ENABLE_BIP61)));
     RegisterValidationInterface(peerLogic.get());
 
     // sanitize comments per BIP-0014, format user agent and check total size
@@ -1987,13 +2098,14 @@ bool AppInitMain(Config &config,
     nTotalCache = std::max(nTotalCache, nMinDbCache << 20);
     // total cache cannot be greater than nMaxDbcache
     nTotalCache = std::min(nTotalCache, nMaxDbCache << 20);
-    int64_t nBlockTreeDBCache = nTotalCache / 8;
-    nBlockTreeDBCache = std::min(nBlockTreeDBCache,
-                                 (gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX)
-                                      ? nMaxBlockDBAndTxIndexCache
-                                      : nMaxBlockDBCache)
-                                     << 20);
+    int64_t nBlockTreeDBCache =
+        std::min(nTotalCache / 8, nMaxBlockDBCache << 20);
     nTotalCache -= nBlockTreeDBCache;
+    int64_t nTxIndexCache =
+        std::min(nTotalCache / 8, gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX)
+                                      ? nMaxTxIndexCache << 20
+                                      : 0);
+    nTotalCache -= nTxIndexCache;
     // use 25%-50% of the remainder for disk cache
     int64_t nCoinDBCache =
         std::min(nTotalCache / 2, (nTotalCache / 4) + (1 << 23));
@@ -2007,6 +2119,10 @@ bool AppInitMain(Config &config,
     LogPrintf("Cache configuration:\n");
     LogPrintf("* Using %.1fMiB for block index database\n",
               nBlockTreeDBCache * (1.0 / 1024 / 1024));
+    if (gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
+        LogPrintf("* Using %.1fMiB for transaction index database\n",
+                  nTxIndexCache * (1.0 / 1024 / 1024));
+    }
     LogPrintf("* Using %.1fMiB for chain state database\n",
               nCoinDBCache * (1.0 / 1024 / 1024));
     LogPrintf("* Using %.1fMiB for in-memory UTXO set (plus up to %.1fMiB of "
@@ -2034,7 +2150,7 @@ bool AppInitMain(Config &config,
                 pblocktree.reset(
                     new CBlockTreeDB(nBlockTreeDBCache, false, fReset));
 
-                if (fReindex) {
+                if (fReset) {
                     pblocktree->WriteReindexing(true);
                     // If we're reindexing in prune mode, wipe away unusable
                     // block files and all undo data files
@@ -2047,9 +2163,11 @@ bool AppInitMain(Config &config,
                     break;
                 }
 
-                // LoadBlockIndex will load fTxIndex from the db, or set it if
-                // we're reindexing. It will also load fHavePruned if we've
-                // ever removed a block file from disk.
+                // LoadBlockIndex will load fHavePruned if we've ever removed a
+                // block file from disk.
+                // Note that it also sets fReindex based on the disk flag!
+                // From here on out fReindex and fReset mean something
+                // different!
                 if (!LoadBlockIndex(config)) {
                     strLoadError = _("Error loading block database");
                     break;
@@ -2065,13 +2183,6 @@ bool AppInitMain(Config &config,
                                        "Wrong datadir for network?"));
                 }
 
-                // Check for changed -txindex state
-                if (fTxIndex != gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
-                    strLoadError = _("You need to rebuild the database using "
-                                     "-reindex-chainstate to change -txindex");
-                    break;
-                }
-
                 // Check for changed -prune state.  What we are concerned about
                 // is a user who has pruned blocks in the past, but is now
                 // trying to run unpruned.
@@ -2085,8 +2196,10 @@ bool AppInitMain(Config &config,
 
                 // At this point blocktree args are consistent with what's on
                 // disk. If we're not mid-reindex (based on disk + args), add a
-                // genesis block on disk. This is called again in ThreadImport
-                // if the reindex completes.
+                // genesis block on disk (otherwise we use the one already on
+                // disk).
+                // This is called again in ThreadImport after the reindex
+                // completes.
                 if (!fReindex && !LoadGenesisBlock(chainparams)) {
                     strLoadError = _("Error initializing block database");
                     break;
@@ -2110,7 +2223,8 @@ bool AppInitMain(Config &config,
 
                 // ReplayBlocks is a no-op if we cleared the coinsviewdb with
                 // -reindex or -reindex-chainstate
-                if (!ReplayBlocks(config, pcoinsdbview.get())) {
+                if (!ReplayBlocks(chainparams.GetConsensus(),
+                                  pcoinsdbview.get())) {
                     strLoadError =
                         _("Unable to replay blocks. You will need to rebuild "
                           "the database using -reindex-chainstate.");
@@ -2120,7 +2234,9 @@ bool AppInitMain(Config &config,
                 // The on-disk coinsdb is now in a good state, create the cache
                 pcoinsTip.reset(new CCoinsViewCache(pcoinscatcher.get()));
 
-                if (!fReindex && !fReindexChainState) {
+                bool is_coinsview_empty = fReset || fReindexChainState ||
+                                          pcoinsTip->GetBestBlock().IsNull();
+                if (!is_coinsview_empty) {
                     // LoadChainTip sets chainActive based on pcoinsTip's best
                     // block
                     if (!LoadChainTip(config)) {
@@ -2130,7 +2246,7 @@ bool AppInitMain(Config &config,
                     assert(chainActive.Tip() != nullptr);
                 }
 
-                if (!fReindex) {
+                if (!fReset) {
                     // Note that RewindBlockIndex MUST run even if we're about
                     // to -reindex-chainstate. It both disconnects blocks based
                     // on chainActive, and drops block data in mapBlockIndex
@@ -2144,15 +2260,15 @@ bool AppInitMain(Config &config,
                     }
                 }
 
-                if (!fReindex && !fReindexChainState) {
+                if (!is_coinsview_empty) {
                     uiInterface.InitMessage(_("Verifying blocks..."));
                     if (fHavePruned &&
                         gArgs.GetArg("-checkblocks", DEFAULT_CHECKBLOCKS) >
                             MIN_BLOCKS_TO_KEEP) {
-                        LogPrintf("Prune: pruned datadir may not have more "
-                                  "than %d blocks; only checking available "
-                                  "blocks",
-                                  MIN_BLOCKS_TO_KEEP);
+                        LogPrintf(
+                            "Prune: pruned datadir may not have more than %d "
+                            "blocks; only checking available blocks\n",
+                            MIN_BLOCKS_TO_KEEP);
                     }
 
                     CBlockIndex *tip = chainActive.Tip();
@@ -2218,20 +2334,27 @@ bool AppInitMain(Config &config,
         LogPrintf("Shutdown requested. Exiting.\n");
         return false;
     }
-    LogPrintf(" block index %15dms\n", GetTimeMillis() - nStart);
+    if (fLoaded) {
+        LogPrintf(" block index %15dms\n", GetTimeMillis() - nStart);
+    }
 
-    // Encoded addresses using cashaddr instead of base58
-    // Activates by default on Jan, 14
-    config.SetCashAddrEncoding(
-        gArgs.GetBoolArg("-usecashaddr", GetAdjustedTime() > 1515900000));
-	mastercore_init();
+    // Encoded addresses using cashaddr instead of base58.
+    // We do this by default to avoid confusion with BTC addresses.
+    config.SetCashAddrEncoding(gArgs.GetBoolArg("-usecashaddr", true));
+    mastercore_init();
 
-    // Step 8: load wallet
-    if (!g_wallet_init_interface->Open(chainparams)) {
+    // Step 8: load indexers
+    if (gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
+        g_txindex = std::make_unique<TxIndex>(nTxIndexCache, false, fReindex);
+        g_txindex->Start();
+    }
+
+    // Step 9: load wallet
+    if (!g_wallet_init_interface.Open(chainparams)) {
         return false;
     }
 
-    // Step 9: data directory maintenance
+    // Step 10: data directory maintenance
 
     // if pruning, unset the service bit and perform the initial blockstore
     // prune after any wallet rescanning has taken place.
@@ -2244,8 +2367,15 @@ bool AppInitMain(Config &config,
         }
     }
 
-    // Step 10: import blocks
-    if (!CheckDiskSpace()) {
+    // Step 11: import blocks
+    if (!CheckDiskSpace(GetDataDir())) {
+        InitError(
+            strprintf(_("Error: Disk space is low for %s"), GetDataDir()));
+        return false;
+    }
+    if (!CheckDiskSpace(GetBlocksDir())) {
+        InitError(
+            strprintf(_("Error: Disk space is low for %s"), GetBlocksDir()));
         return false;
     }
 
@@ -2268,21 +2398,25 @@ bool AppInitMain(Config &config,
     }
 
     threadGroup.create_thread(
-        boost::bind(&ThreadImport, std::ref(config), vImportFiles));
+        std::bind(&ThreadImport, std::ref(config), vImportFiles));
 
     // Wait for genesis block to be processed
     {
-        WAIT_LOCK(cs_GenesisWait, lock);
+        WAIT_LOCK(g_genesis_wait_mutex, lock);
         // We previously could hang here if StartShutdown() is called prior to
         // ThreadImport getting started, so instead we just wait on a timer to
         // check ShutdownRequested() regularly.
         while (!fHaveGenesis && !ShutdownRequested()) {
-            condvar_GenesisWait.wait_for(lock, std::chrono::milliseconds(500));
+            g_genesis_wait_cv.wait_for(lock, std::chrono::milliseconds(500));
         }
         uiInterface.NotifyBlockTip.disconnect(BlockNotifyGenesisWait);
     }
 
-    // Step 11: start node
+    if (ShutdownRequested()) {
+        return false;
+    }
+
+    // Step 12: start node
 
     int chain_active_height;
 
@@ -2314,6 +2448,7 @@ bool AppInitMain(Config &config,
     connOptions.nMaxFeeler = 1;
     connOptions.nBestHeight = chain_active_height;
     connOptions.uiInterface = &uiInterface;
+    connOptions.m_banman = g_banman.get();
     connOptions.m_msgproc = peerLogic.get();
     connOptions.nSendBufferMaxSize =
         1000 * gArgs.GetArg("-maxsendbuffer", DEFAULT_MAXSENDBUFFER);
@@ -2364,16 +2499,23 @@ bool AppInitMain(Config &config,
             connOptions.m_specified_outgoing = connect;
         }
     }
-    if (!connman.Start(scheduler, connOptions)) {
+    if (!g_connman->Start(scheduler, connOptions)) {
         return false;
     }
 
-    // Step 12: finished
+    // Step 13: finished
 
     SetRPCWarmupFinished();
     uiInterface.InitMessage(_("Done loading"));
 
-    g_wallet_init_interface->Start(scheduler);
+    g_wallet_init_interface.Start(scheduler);
 
-    return !fRequestShutdown;
+    scheduler.scheduleEvery(
+        [] {
+            g_banman->DumpBanlist();
+            return true;
+        },
+        DUMP_BANS_INTERVAL * 1000);
+
+    return true;
 }

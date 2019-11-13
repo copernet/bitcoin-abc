@@ -41,21 +41,21 @@ struct KeyData {
 static void CheckError(uint32_t flags, const stacktype &original_stack,
                        const CScript &script, ScriptError expected) {
     BaseSignatureChecker sigchecker;
-    ScriptError err = SCRIPT_ERR_OK;
+    ScriptError err = ScriptError::OK;
     stacktype stack{original_stack};
     bool r = EvalScript(stack, script, flags, sigchecker, &err);
     BOOST_CHECK(!r);
-    BOOST_CHECK_EQUAL(err, expected);
+    BOOST_CHECK(err == expected);
 }
 
 static void CheckPass(uint32_t flags, const stacktype &original_stack,
                       const CScript &script, const stacktype &expected) {
     BaseSignatureChecker sigchecker;
-    ScriptError err = SCRIPT_ERR_OK;
+    ScriptError err = ScriptError::OK;
     stacktype stack{original_stack};
     bool r = EvalScript(stack, script, flags, sigchecker, &err);
     BOOST_CHECK(r);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+    BOOST_CHECK(err == ScriptError::OK);
     BOOST_CHECK(stack == expected);
 }
 
@@ -66,43 +66,41 @@ static void CheckTestResultForAllFlags(const stacktype &original_stack,
                                        const CScript &script,
                                        const stacktype &expected) {
     for (uint32_t flags : flagset) {
-        // Make sure that we get a bad opcode when the activation flag is not
-        // passed.
-        CheckError(flags, original_stack, script, SCRIPT_ERR_BAD_OPCODE);
-
-        // The script execute as expected if the opcodes are activated.
-        CheckPass(flags | SCRIPT_ENABLE_CHECKDATASIG, original_stack, script,
-                  expected);
+        // The script executes as expected regardless of whether or not
+        // SCRIPT_VERIFY_CHECKDATASIG_SIGOPS flag is passed.
+        CheckPass(flags & ~SCRIPT_VERIFY_CHECKDATASIG_SIGOPS, original_stack,
+                  script, expected);
+        CheckPass(flags | SCRIPT_VERIFY_CHECKDATASIG_SIGOPS, original_stack,
+                  script, expected);
     }
 }
 
 static void CheckErrorForAllFlags(const stacktype &original_stack,
                                   const CScript &script, ScriptError expected) {
     for (uint32_t flags : flagset) {
-        // Make sure that we get a bad opcode when the activation flag is not
-        // passed.
-        CheckError(flags, original_stack, script, SCRIPT_ERR_BAD_OPCODE);
-
-        // The script generates the proper error if the opcodes are activated.
-        CheckError(flags | SCRIPT_ENABLE_CHECKDATASIG, original_stack, script,
-                   expected);
+        // The script generates the proper error regardless of whether or not
+        // SCRIPT_VERIFY_CHECKDATASIG_SIGOPS flag is passed.
+        CheckError(flags & ~SCRIPT_VERIFY_CHECKDATASIG_SIGOPS, original_stack,
+                   script, expected);
+        CheckError(flags | SCRIPT_VERIFY_CHECKDATASIG_SIGOPS, original_stack,
+                   script, expected);
     }
 }
 
 BOOST_AUTO_TEST_CASE(checkdatasig_test) {
     // Empty stack.
     CheckErrorForAllFlags({}, CScript() << OP_CHECKDATASIG,
-                          SCRIPT_ERR_INVALID_STACK_OPERATION);
+                          ScriptError::INVALID_STACK_OPERATION);
     CheckErrorForAllFlags({{0x00}}, CScript() << OP_CHECKDATASIG,
-                          SCRIPT_ERR_INVALID_STACK_OPERATION);
+                          ScriptError::INVALID_STACK_OPERATION);
     CheckErrorForAllFlags({{0x00}, {0x00}}, CScript() << OP_CHECKDATASIG,
-                          SCRIPT_ERR_INVALID_STACK_OPERATION);
+                          ScriptError::INVALID_STACK_OPERATION);
     CheckErrorForAllFlags({}, CScript() << OP_CHECKDATASIGVERIFY,
-                          SCRIPT_ERR_INVALID_STACK_OPERATION);
+                          ScriptError::INVALID_STACK_OPERATION);
     CheckErrorForAllFlags({{0x00}}, CScript() << OP_CHECKDATASIGVERIFY,
-                          SCRIPT_ERR_INVALID_STACK_OPERATION);
+                          ScriptError::INVALID_STACK_OPERATION);
     CheckErrorForAllFlags({{0x00}, {0x00}}, CScript() << OP_CHECKDATASIGVERIFY,
-                          SCRIPT_ERR_INVALID_STACK_OPERATION);
+                          ScriptError::INVALID_STACK_OPERATION);
 
     // Check various pubkey encoding.
     const valtype message{};
@@ -121,10 +119,10 @@ BOOST_AUTO_TEST_CASE(checkdatasig_test) {
                                CScript() << OP_CHECKDATASIG, {{}});
     CheckErrorForAllFlags({{}, message, pubkey},
                           CScript() << OP_CHECKDATASIGVERIFY,
-                          SCRIPT_ERR_CHECKDATASIGVERIFY);
+                          ScriptError::CHECKDATASIGVERIFY);
     CheckErrorForAllFlags({{}, message, pubkeyC},
                           CScript() << OP_CHECKDATASIGVERIFY,
-                          SCRIPT_ERR_CHECKDATASIGVERIFY);
+                          ScriptError::CHECKDATASIGVERIFY);
 
     // Flags dependent checks.
     const CScript script = CScript() << OP_CHECKDATASIG << OP_NOT << OP_VERIFY;
@@ -152,81 +150,81 @@ BOOST_AUTO_TEST_CASE(checkdatasig_test) {
 
     MMIXLinearCongruentialGenerator lcg;
     for (int i = 0; i < 4096; i++) {
-        uint32_t flags = lcg.next() | SCRIPT_ENABLE_CHECKDATASIG;
+        uint32_t flags = lcg.next() | SCRIPT_VERIFY_CHECKDATASIG_SIGOPS;
 
         if (flags & SCRIPT_VERIFY_STRICTENC) {
             // When strict encoding is enforced, hybrid keys are invalid.
             CheckError(flags, {{}, message, pubkeyH}, script,
-                       SCRIPT_ERR_PUBKEYTYPE);
+                       ScriptError::PUBKEYTYPE);
             CheckError(flags, {{}, message, pubkeyH}, scriptverify,
-                       SCRIPT_ERR_PUBKEYTYPE);
+                       ScriptError::PUBKEYTYPE);
         } else if (flags & SCRIPT_VERIFY_COMPRESSED_PUBKEYTYPE) {
             // When compressed-only is enforced, hybrid keys are invalid.
             CheckError(flags, {{}, message, pubkeyH}, script,
-                       SCRIPT_ERR_NONCOMPRESSED_PUBKEY);
+                       ScriptError::NONCOMPRESSED_PUBKEY);
             CheckError(flags, {{}, message, pubkeyH}, scriptverify,
-                       SCRIPT_ERR_NONCOMPRESSED_PUBKEY);
+                       ScriptError::NONCOMPRESSED_PUBKEY);
         } else {
             // Otherwise, hybrid keys are valid.
             CheckPass(flags, {{}, message, pubkeyH}, script, {});
             CheckError(flags, {{}, message, pubkeyH}, scriptverify,
-                       SCRIPT_ERR_CHECKDATASIGVERIFY);
+                       ScriptError::CHECKDATASIGVERIFY);
         }
 
         if (flags & SCRIPT_VERIFY_COMPRESSED_PUBKEYTYPE) {
             // When compressed-only is enforced, uncompressed keys are invalid.
             CheckError(flags, {{}, message, pubkey}, script,
-                       SCRIPT_ERR_NONCOMPRESSED_PUBKEY);
+                       ScriptError::NONCOMPRESSED_PUBKEY);
             CheckError(flags, {{}, message, pubkey}, scriptverify,
-                       SCRIPT_ERR_NONCOMPRESSED_PUBKEY);
+                       ScriptError::NONCOMPRESSED_PUBKEY);
         } else {
             // Otherwise, uncompressed keys are valid.
             CheckPass(flags, {{}, message, pubkey}, script, {});
             CheckError(flags, {{}, message, pubkey}, scriptverify,
-                       SCRIPT_ERR_CHECKDATASIGVERIFY);
+                       ScriptError::CHECKDATASIGVERIFY);
         }
 
         if (flags & SCRIPT_VERIFY_NULLFAIL) {
             // Invalid signature causes checkdatasig to fail.
             CheckError(flags, {minimalsig, message, pubkeyC}, script,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
             CheckError(flags, {minimalsig, message, pubkeyC}, scriptverify,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
 
             // Invalid message causes checkdatasig to fail.
             CheckError(flags, {validsig, {0x01}, pubkeyC}, script,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
             CheckError(flags, {validsig, {0x01}, pubkeyC}, scriptverify,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
         } else {
             // When nullfail is not enforced, invalid signature are just false.
             CheckPass(flags, {minimalsig, message, pubkeyC}, script, {});
             CheckError(flags, {minimalsig, message, pubkeyC}, scriptverify,
-                       SCRIPT_ERR_CHECKDATASIGVERIFY);
+                       ScriptError::CHECKDATASIGVERIFY);
 
             // Invalid message cause checkdatasig to fail.
             CheckPass(flags, {validsig, {0x01}, pubkeyC}, script, {});
             CheckError(flags, {validsig, {0x01}, pubkeyC}, scriptverify,
-                       SCRIPT_ERR_CHECKDATASIGVERIFY);
+                       ScriptError::CHECKDATASIGVERIFY);
         }
 
         if (flags & SCRIPT_VERIFY_LOW_S) {
             // If we do enforce low S, then high S sigs are rejected.
             CheckError(flags, {highSSig, message, pubkeyC}, script,
-                       SCRIPT_ERR_SIG_HIGH_S);
+                       ScriptError::SIG_HIGH_S);
             CheckError(flags, {highSSig, message, pubkeyC}, scriptverify,
-                       SCRIPT_ERR_SIG_HIGH_S);
+                       ScriptError::SIG_HIGH_S);
         } else if (flags & SCRIPT_VERIFY_NULLFAIL) {
             // If we do enforce nullfail, these invalid sigs hit this.
             CheckError(flags, {highSSig, message, pubkeyC}, script,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
             CheckError(flags, {highSSig, message, pubkeyC}, scriptverify,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
         } else {
             // If we do not enforce low S, then high S sigs are accepted.
             CheckPass(flags, {highSSig, message, pubkeyC}, script, {});
             CheckError(flags, {highSSig, message, pubkeyC}, scriptverify,
-                       SCRIPT_ERR_CHECKDATASIGVERIFY);
+                       ScriptError::CHECKDATASIGVERIFY);
         }
 
         if (flags & (SCRIPT_VERIFY_DERSIG | SCRIPT_VERIFY_LOW_S |
@@ -234,22 +232,29 @@ BOOST_AUTO_TEST_CASE(checkdatasig_test) {
             // If we get any of the dersig flags, the non canonical dersig
             // signature fails.
             CheckError(flags, {nondersig, message, pubkeyC}, script,
-                       SCRIPT_ERR_SIG_DER);
+                       ScriptError::SIG_DER);
             CheckError(flags, {nondersig, message, pubkeyC}, scriptverify,
-                       SCRIPT_ERR_SIG_DER);
+                       ScriptError::SIG_DER);
         } else if (flags & SCRIPT_VERIFY_NULLFAIL) {
             // If we do enforce nullfail, these invalid sigs hit this.
             CheckError(flags, {nondersig, message, pubkeyC}, script,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
             CheckError(flags, {nondersig, message, pubkeyC}, scriptverify,
-                       SCRIPT_ERR_SIG_NULLFAIL);
+                       ScriptError::SIG_NULLFAIL);
         } else {
             // If we do not check, then it is accepted.
             CheckPass(flags, {nondersig, message, pubkeyC}, script, {});
             CheckError(flags, {nondersig, message, pubkeyC}, scriptverify,
-                       SCRIPT_ERR_CHECKDATASIGVERIFY);
+                       ScriptError::CHECKDATASIGVERIFY);
         }
     }
+}
+
+BOOST_AUTO_TEST_CASE(checkdatasig_inclusion_in_standard_and_mandatory_flags) {
+    BOOST_CHECK(STANDARD_SCRIPT_VERIFY_FLAGS &
+                SCRIPT_VERIFY_CHECKDATASIG_SIGOPS);
+    BOOST_CHECK(
+        !(MANDATORY_SCRIPT_VERIFY_FLAGS & SCRIPT_VERIFY_CHECKDATASIG_SIGOPS));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

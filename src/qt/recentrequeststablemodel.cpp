@@ -13,8 +13,6 @@
 
 RecentRequestsTableModel::RecentRequestsTableModel(WalletModel *parent)
     : QAbstractTableModel(parent), walletModel(parent) {
-    nReceiveRequestsMaxId = 0;
-
     // Load entries from wallet
     std::vector<std::string> vReceiveRequests;
     parent->loadReceiveRequests(vReceiveRequests);
@@ -25,8 +23,8 @@ RecentRequestsTableModel::RecentRequestsTableModel(WalletModel *parent)
     /* These columns must match the indices in the ColumnIndex enumeration */
     columns << tr("Date") << tr("Label") << tr("Message") << getAmountTitle();
 
-    connect(walletModel->getOptionsModel(), SIGNAL(displayUnitChanged(int)),
-            this, SLOT(updateDisplayUnit()));
+    connect(walletModel->getOptionsModel(), &OptionsModel::displayUnitChanged,
+            this, &RecentRequestsTableModel::updateDisplayUnit);
 }
 
 RecentRequestsTableModel::~RecentRequestsTableModel() {
@@ -49,9 +47,8 @@ QVariant RecentRequestsTableModel::data(const QModelIndex &index,
                                         int role) const {
     if (!index.isValid() || index.row() >= list.length()) return QVariant();
 
-    const RecentRequestEntry *rec = &list[index.row()];
-
     if (role == Qt::DisplayRole || role == Qt::EditRole) {
+        const RecentRequestEntry *rec = &list[index.row()];
         switch (index.column()) {
             case Date:
                 return GUIUtil::dateTimeStr(rec->date);
@@ -135,12 +132,12 @@ bool RecentRequestsTableModel::removeRows(int row, int count,
     Q_UNUSED(parent);
 
     if (count > 0 && row >= 0 && (row + count) <= list.size()) {
-        const RecentRequestEntry *rec;
         for (int i = 0; i < count; ++i) {
-            rec = &list[row + i];
+            const RecentRequestEntry *rec = &list[row + i];
             if (!walletModel->saveReceiveRequest(
-                    rec->recipient.address.toStdString(), rec->id, ""))
+                    rec->recipient.address.toStdString(), rec->id, "")) {
                 return false;
+            }
         }
 
         beginRemoveRows(parent, row, row + count - 1);

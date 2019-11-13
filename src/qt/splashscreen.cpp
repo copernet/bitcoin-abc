@@ -16,7 +16,7 @@
 #include <interfaces/node.h>
 #include <interfaces/wallet.h>
 #include <ui_interface.h>
-#include <util.h>
+#include <util/system.h>
 #include <version.h>
 
 #include <QApplication>
@@ -98,7 +98,7 @@ SplashScreen::SplashScreen(interfaces::Node &node, Qt::WindowFlags f,
 
     pixPaint.setFont(QFont(font, 15 * fontFactor));
 
-    // if the version string is to long, reduce size
+    // if the version string is too long, reduce size
     fm = pixPaint.fontMetrics();
     int versionTextWidth = fm.width(versionText);
     if (versionTextWidth > titleTextWidth + paddingRight - 10) {
@@ -192,17 +192,19 @@ static void ShowProgress(SplashScreen *splash, const std::string &title,
 #ifdef ENABLE_WALLET
 void SplashScreen::ConnectWallet(std::unique_ptr<interfaces::Wallet> wallet) {
     m_connected_wallet_handlers.emplace_back(wallet->handleShowProgress(
-        boost::bind(ShowProgress, this, _1, _2, false)));
+        std::bind(ShowProgress, this, std::placeholders::_1,
+                  std::placeholders::_2, false)));
     m_connected_wallets.emplace_back(std::move(wallet));
 }
 #endif
 
 void SplashScreen::subscribeToCoreSignals() {
     // Connect signals to client
-    m_handler_init_message =
-        m_node.handleInitMessage(boost::bind(InitMessage, this, _1));
-    m_handler_show_progress =
-        m_node.handleShowProgress(boost::bind(ShowProgress, this, _1, _2, _3));
+    m_handler_init_message = m_node.handleInitMessage(
+        std::bind(InitMessage, this, std::placeholders::_1));
+    m_handler_show_progress = m_node.handleShowProgress(
+        std::bind(ShowProgress, this, std::placeholders::_1,
+                  std::placeholders::_2, std::placeholders::_3));
 #ifdef ENABLE_WALLET
     m_handler_load_wallet = m_node.handleLoadWallet(
         [this](std::unique_ptr<interfaces::Wallet> wallet) {
@@ -215,7 +217,7 @@ void SplashScreen::unsubscribeFromCoreSignals() {
     // Disconnect signals from client
     m_handler_init_message->disconnect();
     m_handler_show_progress->disconnect();
-    for (auto &handler : m_connected_wallet_handlers) {
+    for (const auto &handler : m_connected_wallet_handlers) {
         handler->disconnect();
     }
     m_connected_wallet_handlers.clear();

@@ -5,7 +5,7 @@
 #ifndef BITCOIN_QT_TRANSACTIONFILTERPROXY_H
 #define BITCOIN_QT_TRANSACTIONFILTERPROXY_H
 
-#include "amount.h"
+#include <amount.h>
 
 #include <QDateTime>
 #include <QSortFilterProxyModel>
@@ -41,7 +41,7 @@ public:
     };
 
     void setDateRange(const QDateTime &from, const QDateTime &to);
-    void setAddressPrefix(const QString &addrPrefix);
+    void setSearchString(const QString &);
     /**
      * @note Type filter takes a bit field created with TYPE() or ALL_TYPES
      */
@@ -68,7 +68,7 @@ protected:
 private:
     QDateTime dateFrom;
     QDateTime dateTo;
-    QString addrPrefix;
+    QString m_search_string;
     quint32 typeFilter;
     WatchOnlyFilter watchOnlyFilter;
     Amount minAmount;

@@ -7,7 +7,7 @@
 
 #include <hash.h>
 #include <tinyformat.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
 
 std::string COutPoint::ToString() const {
     return strprintf("COutPoint(%s, %u)", txid.ToString().substr(0, 10), n);
@@ -38,7 +38,7 @@ std::string CTxOut::ToString() const {
 CMutableTransaction::CMutableTransaction()
     : nVersion(CTransaction::CURRENT_VERSION), nLockTime(0) {}
 CMutableTransaction::CMutableTransaction(const CTransaction &tx)
-    : nVersion(tx.nVersion), vin(tx.vin), vout(tx.vout),
+    : vin(tx.vin), vout(tx.vout), nVersion(tx.nVersion),
       nLockTime(tx.nLockTime) {}
 
 static uint256 ComputeCMutableTransactionHash(const CMutableTransaction &tx) {
@@ -62,13 +62,13 @@ uint256 CTransaction::ComputeHash() const {
  * TODO: remove the need for this default constructor entirely.
  */
 CTransaction::CTransaction()
-    : nVersion(CTransaction::CURRENT_VERSION), vin(), vout(), nLockTime(0),
+    : vin(), vout(), nVersion(CTransaction::CURRENT_VERSION), nLockTime(0),
       hash() {}
 CTransaction::CTransaction(const CMutableTransaction &tx)
-    : nVersion(tx.nVersion), vin(tx.vin), vout(tx.vout),
+    : vin(tx.vin), vout(tx.vout), nVersion(tx.nVersion),
       nLockTime(tx.nLockTime), hash(ComputeHash()) {}
 CTransaction::CTransaction(CMutableTransaction &&tx)
-    : nVersion(tx.nVersion), vin(std::move(tx.vin)), vout(std::move(tx.vout)),
+    : vin(std::move(tx.vin)), vout(std::move(tx.vout)), nVersion(tx.nVersion),
       nLockTime(tx.nLockTime), hash(ComputeHash()) {}
 
 Amount CTransaction::GetValueOut() const {
@@ -111,10 +111,6 @@ unsigned int CTransaction::CalculateModifiedSize(unsigned int nTxSize) const {
         }
     }
     return nTxSize;
-}
-
-size_t CTransaction::GetBillableSize() const {
-    return ::GetSerializeSize(*this, SER_NETWORK, PROTOCOL_VERSION);
 }
 
 unsigned int CTransaction::GetTotalSize() const {

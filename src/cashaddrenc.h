@@ -30,4 +30,4 @@ CTxDestination DecodeCashAddrDestination(const CashAddrContent &content);
 
 std::vector<uint8_t> PackCashAddrContent(const CashAddrContent &content);
 
-#endif
+#endif // BITCOIN_CASHADDRENC_H

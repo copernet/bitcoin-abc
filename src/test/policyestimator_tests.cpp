@@ -7,7 +7,7 @@
 
 #include <txmempool.h>
 #include <uint256.h>
-#include <util.h>
+#include <util/system.h>
 
 #include <test/test_bitcoin.h>
 
@@ -17,6 +17,7 @@ BOOST_FIXTURE_TEST_SUITE(policyestimator_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(MempoolMinimumFeeEstimate) {
     CTxMemPool mpool;
+    LOCK2(cs_main, mpool.cs);
     TestMemPoolEntryHelper entry;
 
     // Create a transaction template
@@ -55,9 +56,8 @@ BOOST_AUTO_TEST_CASE(MempoolMinimumFeeEstimate) {
         block.clear();
     }
 
-    // Check that the estimate is above the rolling minimum fee.  This should
-    // be true since we have not trimmed the mempool.
-    BOOST_CHECK(CFeeRate(Amount::zero()) == mpool.estimateFee());
+    // Check that the estimate is above the rolling minimum fee. This should be
+    // true since we have not trimmed the mempool.
     BOOST_CHECK(mpool.GetMinFee(1) <= mpool.estimateFee());
 
     // Check that estimateFee returns the minimum rolling fee even when the

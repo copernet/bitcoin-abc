@@ -4,16 +4,16 @@
 
 #include <qt/paymentserver.h>
 
+#include <cashaddrenc.h>
 #include <chainparams.h>
-#include <config.h>
-#include <dstencode.h>
 #include <interfaces/node.h>
+#include <key_io.h>
 #include <policy/policy.h>
 #include <qt/bitcoinunits.h>
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
 #include <ui_interface.h>
-#include <util.h>
+#include <util/system.h>
 #include <wallet/wallet.h>
 
 #include <openssl/x509_vfy.h>
@@ -135,8 +135,9 @@ void PaymentServer::LoadRootCAs(X509_STORE *_store) {
         certList = QSslCertificate::fromPath(certFile);
         // Use those certificates when fetching payment requests, too:
         QSslSocket::setDefaultCaCertificates(certList);
-    } else
+    } else {
         certList = QSslSocket::systemCaCertificates();
+    }
 
     int nRootCerts = 0;
     const QDateTime currentTime = QDateTime::currentDateTime();
@@ -188,7 +189,7 @@ void PaymentServer::LoadRootCAs(X509_STORE *_store) {
 
 static std::string ipcParseURI(const QString &arg, const CChainParams &params,
                                bool useCashAddr) {
-    const QString scheme = GUIUtil::bitcoinURIScheme(params, useCashAddr);
+    const QString scheme = QString::fromStdString(params.CashAddrPrefix());
     if (!arg.startsWith(scheme + ":", Qt::CaseInsensitive)) {
         return {};
     }
@@ -354,10 +355,10 @@ PaymentServer::PaymentServer(QObject *parent, bool startLocalServer)
             QMessageBox::critical(0, tr("Payment request error"),
                                   tr("Cannot start click-to-pay handler"));
         } else {
-            connect(uriServer, SIGNAL(newConnection()), this,
-                    SLOT(handleURIConnection()));
-            connect(this, SIGNAL(receivedPaymentACK(QString)), this,
-                    SLOT(handlePaymentACK(QString)));
+            connect(uriServer, &QLocalServer::newConnection, this,
+                    &PaymentServer::handleURIConnection);
+            connect(this, &PaymentServer::receivedPaymentACK, this,
+                    &PaymentServer::handlePaymentACK);
         }
     }
 }
@@ -410,11 +411,10 @@ void PaymentServer::initNetManager() {
             << "PaymentServer::initNetManager: No active proxy server found.";
     }
 
-    connect(netManager, SIGNAL(finished(QNetworkReply *)), this,
-            SLOT(netRequestFinished(QNetworkReply *)));
-    connect(netManager,
-            SIGNAL(sslErrors(QNetworkReply *, const QList<QSslError> &)), this,
-            SLOT(reportSslErrors(QNetworkReply *, const QList<QSslError> &)));
+    connect(netManager, &QNetworkAccessManager::finished, this,
+            &PaymentServer::netRequestFinished);
+    connect(netManager, &QNetworkAccessManager::sslErrors, this,
+            &PaymentServer::reportSslErrors);
 }
 
 void PaymentServer::uiReady() {
@@ -427,7 +427,8 @@ void PaymentServer::uiReady() {
     savedPaymentRequests.clear();
 }
 
-bool PaymentServer::handleURI(const QString &scheme, const QString &s) {
+bool PaymentServer::handleURI(const CChainParams &params, const QString &s) {
+    const QString scheme = QString::fromStdString(params.CashAddrPrefix());
     if (!s.startsWith(scheme + ":", Qt::CaseInsensitive)) {
         return false;
     }
@@ -460,7 +461,7 @@ bool PaymentServer::handleURI(const QString &scheme, const QString &s) {
     SendCoinsRecipient recipient;
     if (GUIUtil::parseBitcoinURI(scheme, s, &recipient)) {
         if (!IsValidDestinationString(recipient.address.toStdString(),
-                                      GetConfig().GetChainParams())) {
+                                      params)) {
             Q_EMIT message(
                 tr("URI handling"),
                 tr("Invalid payment address %1").arg(recipient.address),
@@ -486,14 +487,7 @@ void PaymentServer::handleURIOrFile(const QString &s) {
     }
 
     // bitcoincash: CashAddr URI
-    QString schemeCash = GUIUtil::bitcoinURIScheme(Params(), true);
-    if (handleURI(schemeCash, s)) {
-        return;
-    }
-
-    // bitcoincash: Legacy URI
-    QString schemeLegacy = GUIUtil::bitcoinURIScheme(Params(), false);
-    if (handleURI(schemeLegacy, s)) {
+    if (handleURI(Params(), s)) {
         return;
     }
 
@@ -521,8 +515,8 @@ void PaymentServer::handleURIConnection() {
         clientConnection->waitForReadyRead();
     }
 
-    connect(clientConnection, SIGNAL(disconnected()), clientConnection,
-            SLOT(deleteLater()));
+    connect(clientConnection, &QLocalSocket::disconnected, clientConnection,
+            &QLocalSocket::deleteLater);
 
     QDataStream in(clientConnection);
     in.setVersion(QDataStream::Qt_4_0);
@@ -607,13 +601,12 @@ bool PaymentServer::processPaymentRequest(const PaymentRequestPlus &request,
         CTxDestination dest;
         if (ExtractDestination(sendingTo.first, dest)) {
             // Append destination address
-            addresses.append(QString::fromStdString(EncodeDestination(dest)));
+            addresses.append(
+                QString::fromStdString(EncodeCashAddr(dest, Params())));
         } else if (!recipient.authenticatedMerchant.isEmpty()) {
             // Unauthenticated payment requests to custom bitcoin addresses are
-            // not supported
-            // (there is no good way to tell the user where they are paying in a
-            // way they'd
-            // have a chance of understanding).
+            // not supported (there is no good way to tell the user where they
+            // are paying in a way they'd have a chance of understanding).
             Q_EMIT message(tr("Payment request rejected"),
                            tr("Unverified payment requests to custom payment "
                               "scripts are unsupported."),
@@ -634,7 +627,7 @@ bool PaymentServer::processPaymentRequest(const PaymentRequestPlus &request,
 
         // Extract and check amounts
         CTxOut txOut(Amount(sendingTo.second), sendingTo.first);
-        if (txOut.IsDust(optionsModel->node().getDustRelayFee())) {
+        if (IsDust(txOut, optionsModel->node().getDustRelayFee())) {
             Q_EMIT message(
                 tr("Payment request error"),
                 tr("Requested payment amount of %1 is too small (considered "
@@ -704,30 +697,33 @@ void PaymentServer::fetchPaymentACK(WalletModel *walletModel,
     payment.add_transactions(transaction.data(), transaction.size());
 
     // Create a new refund address, or re-use:
-    std::string label =
-        tr("Refund from %1").arg(recipient.authenticatedMerchant).toStdString();
-    std::set<CTxDestination> refundAddresses =
-        walletModel->wallet().getLabelAddresses(label);
-    if (!refundAddresses.empty()) {
-        CScript s = GetScriptForDestination(*refundAddresses.begin());
+    CPubKey newKey;
+    if (walletModel->wallet().getKeyFromPool(false /* internal */, newKey)) {
+        // BIP70 requests encode the scriptPubKey directly, so we are not
+        // restricted to address types supported by the receiver. As a result,
+        // we choose the address format we also use for change. Despite an
+        // actual payment and not change, this is a close match: it's the output
+        // type we use subject to privacy issues, but not restricted by what
+        // other software supports.
+        const OutputType change_type =
+            walletModel->wallet().getDefaultChangeType() != OutputType::NONE
+                ? walletModel->wallet().getDefaultChangeType()
+                : walletModel->wallet().getDefaultAddressType();
+        walletModel->wallet().learnRelatedScripts(newKey, change_type);
+        CTxDestination dest = GetDestinationForKey(newKey, change_type);
+        std::string label = tr("Refund from %1")
+                                .arg(recipient.authenticatedMerchant)
+                                .toStdString();
+        walletModel->wallet().setAddressBook(dest, label, "refund");
+
+        CScript s = GetScriptForDestination(dest);
         payments::Output *refund_to = payment.add_refund_to();
         refund_to->set_script(&s[0], s.size());
     } else {
-        CPubKey newKey;
-        if (walletModel->wallet().getKeyFromPool(false /* internal */,
-                                                 newKey)) {
-            CKeyID keyID = newKey.GetID();
-            walletModel->wallet().setAddressBook(keyID, label, "refund");
-
-            CScript s = GetScriptForDestination(keyID);
-            payments::Output *refund_to = payment.add_refund_to();
-            refund_to->set_script(&s[0], s.size());
-        } else {
-            // This should never happen, because sending coins should have just
-            // unlocked the wallet and refilled the keypool.
-            qWarning() << "PaymentServer::fetchPaymentACK: Error getting "
-                          "refund key, refund_to not set";
-        }
+        // This should never happen, because sending coins should have
+        // just unlocked the wallet and refilled the keypool.
+        qWarning() << "PaymentServer::fetchPaymentACK: Error getting refund "
+                      "key, refund_to not set";
     }
 
     int length = payment.ByteSize();

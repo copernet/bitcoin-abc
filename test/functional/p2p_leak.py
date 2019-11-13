@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2017 The Bitcoin Core developers
+# Copyright (c) 2017-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test message sending before handshake completion.
@@ -7,15 +7,19 @@
 A node should never send anything other than VERSION/VERACK/REJECT until it's
 received a VERACK.
 
-This test connects to a node and sends it a few messages, trying to intice it
-into sending us something it shouldn't."""
+This test connects to a node and sends it a few messages, trying to entice it
+into sending us something it shouldn't.
+"""
 
 import time
 
+from test_framework.messages import (
+    msg_getaddr,
+    msg_ping,
+    msg_verack,
+)
 from test_framework.mininode import (
     mininode_lock,
-    network_thread_join,
-    network_thread_start,
     P2PInterface,
 )
 from test_framework.test_framework import BitcoinTestFramework
@@ -130,13 +134,11 @@ class P2PLeakTest(BitcoinTestFramework):
 
     def run_test(self):
         no_version_bannode = self.nodes[0].add_p2p_connection(
-            CNodeNoVersionBan(), send_version=False)
+            CNodeNoVersionBan(), send_version=False, wait_for_verack=False)
         no_version_idlenode = self.nodes[0].add_p2p_connection(
-            CNodeNoVersionIdle(), send_version=False)
+            CNodeNoVersionIdle(), send_version=False, wait_for_verack=False)
         no_verack_idlenode = self.nodes[0].add_p2p_connection(
             CNodeNoVerackIdle())
-
-        network_thread_start()
 
         wait_until(lambda: no_version_bannode.ever_connected,
                    timeout=10, lock=mininode_lock)
@@ -152,18 +154,17 @@ class P2PLeakTest(BitcoinTestFramework):
         time.sleep(5)
 
         # This node should have been banned
-        assert no_version_bannode.state != "connected"
+        assert not no_version_bannode.is_connected
 
         self.nodes[0].disconnect_p2ps()
 
-        # Wait until all connections are closed and the network thread has terminated
+        # Wait until all connections are closed
         wait_until(lambda: len(self.nodes[0].getpeerinfo()) == 0)
-        network_thread_join()
 
         # Make sure no unexpected messages came in
-        assert(no_version_bannode.unexpected_msg == False)
-        assert(no_version_idlenode.unexpected_msg == False)
-        assert(no_verack_idlenode.unexpected_msg == False)
+        assert no_version_bannode.unexpected_msg == False
+        assert no_version_idlenode.unexpected_msg == False
+        assert no_verack_idlenode.unexpected_msg == False
 
 
 if __name__ == '__main__':

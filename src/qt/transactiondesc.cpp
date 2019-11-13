@@ -4,17 +4,19 @@
 
 #include <qt/transactiondesc.h>
 
+#include <cashaddrenc.h>
 #include <chain.h>
 #include <consensus/consensus.h>
-#include <dstencode.h>
 #include <interfaces/node.h>
+#include <key_io.h>
+#include <policy/policy.h>
 #include <qt/bitcoinunits.h>
 #include <qt/guiutil.h>
 #include <qt/paymentserver.h>
 #include <qt/transactionrecord.h>
 #include <script/script.h>
 #include <timedata.h>
-#include <util.h>
+#include <util/system.h>
 #include <validation.h>
 #include <wallet/db.h>
 #include <wallet/finaltx.h>
@@ -23,9 +25,10 @@
 #include <cstdint>
 #include <string>
 
-QString TransactionDesc::FormatTxStatus(
-    const interfaces::WalletTx &wtx, const interfaces::WalletTxStatus &status,
-    bool inMempool, int numBlocks, int64_t adjustedTime) {
+QString
+TransactionDesc::FormatTxStatus(const interfaces::WalletTx &wtx,
+                                const interfaces::WalletTxStatus &status,
+                                bool inMempool, int numBlocks) {
     if (!status.is_final) {
         if (wtx.tx->nLockTime < LOCKTIME_THRESHOLD) {
             return tr("Open for %n more block(s)", "",
@@ -39,9 +42,6 @@ QString TransactionDesc::FormatTxStatus(
         if (nDepth < 0) {
             return tr("conflicted with a transaction with %1 confirmations")
                 .arg(-nDepth);
-        } else if (adjustedTime - status.time_received > 2 * 60 &&
-                   status.request_count == 0) {
-            return tr("%1/offline").arg(nDepth);
         } else if (nDepth == 0) {
             return tr("0/unconfirmed, %1")
                        .arg((inMempool ? tr("in memory pool")
@@ -59,12 +59,11 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
                                 interfaces::Wallet &wallet,
                                 TransactionRecord *rec, int unit) {
     int numBlocks;
-    int64_t adjustedTime;
     interfaces::WalletTxStatus status;
     interfaces::WalletOrderForm orderForm;
     bool inMempool;
     interfaces::WalletTx wtx = wallet.getWalletTxDetails(
-        rec->txid, status, orderForm, inMempool, numBlocks, adjustedTime);
+        rec->txid, status, orderForm, inMempool, numBlocks);
 
     QString strHTML;
 
@@ -77,15 +76,7 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
     Amount nNet = nCredit - nDebit;
 
     strHTML += "<b>" + tr("Status") + ":</b> " +
-               FormatTxStatus(wtx, status, inMempool, numBlocks, adjustedTime);
-    int nRequests = status.request_count;
-    if (nRequests != -1) {
-        if (nRequests == 0) {
-            strHTML += tr(", has not been successfully broadcast yet");
-        } else if (nRequests > 0) {
-            strHTML += tr(", broadcast through %n node(s)", "", nRequests);
-        }
-    }
+               FormatTxStatus(wtx, status, inMempool, numBlocks);
     strHTML += "<br>";
 
     strHTML += "<b>" + tr("Date") + ":</b> " +
@@ -109,7 +100,8 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
             if (IsValidDestination(address)) {
                 std::string name;
                 isminetype ismine;
-                if (wallet.getAddress(address, &name, &ismine)) {
+                if (wallet.getAddress(address, &name, &ismine,
+                                      /* purpose= */ nullptr)) {
                     strHTML +=
                         "<b>" + tr("From") + ":</b> " + tr("unknown") + "<br>";
                     strHTML += "<b>" + tr("To") + ":</b> ";
@@ -139,7 +131,9 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
         CTxDestination dest =
             DecodeDestination(strAddress, wallet.getChainParams());
         std::string name;
-        if (wallet.getAddress(dest, &name) && !name.empty()) {
+        if (wallet.getAddress(dest, &name, /* is_mine= */ nullptr,
+                              /* purpose= */ nullptr) &&
+            !name.empty()) {
             strHTML += GUIUtil::HtmlEscape(name) + " ";
         }
         strHTML += GUIUtil::HtmlEscape(strAddress) + "<br>";
@@ -175,14 +169,14 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
                    BitcoinUnits::formatHtmlWithUnit(unit, nNet) + "<br>";
     } else {
         isminetype fAllFromMe = ISMINE_SPENDABLE;
-        for (isminetype mine : wtx.txin_is_mine) {
+        for (const isminetype mine : wtx.txin_is_mine) {
             if (fAllFromMe > mine) {
                 fAllFromMe = mine;
             }
         }
 
         isminetype fAllToMe = ISMINE_SPENDABLE;
-        for (isminetype mine : wtx.txout_is_mine) {
+        for (const isminetype mine : wtx.txout_is_mine) {
             if (fAllToMe > mine) {
                 fAllToMe = mine;
             }
@@ -212,12 +206,14 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
                     if (ExtractDestination(txout.scriptPubKey, address)) {
                         strHTML += "<b>" + tr("To") + ":</b> ";
                         std::string name;
-                        if (wallet.getAddress(address, &name) &&
+                        if (wallet.getAddress(address, &name,
+                                              /* is_mine= */ nullptr,
+                                              /* purpose= */ nullptr) &&
                             !name.empty()) {
                             strHTML += GUIUtil::HtmlEscape(name) + " ";
                         }
-                        strHTML +=
-                            GUIUtil::HtmlEscape(EncodeDestination(address));
+                        strHTML += GUIUtil::HtmlEscape(
+                            EncodeCashAddr(address, wallet.getChainParams()));
                         if (toSelf == ISMINE_SPENDABLE) {
                             strHTML += " (own address)";
                         } else if (toSelf & ISMINE_WATCH_ONLY) {
@@ -252,10 +248,11 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
             }
 
             Amount nTxFee = nDebit - wtx.tx->GetValueOut();
-            if (nTxFee > Amount::zero())
+            if (nTxFee > Amount::zero()) {
                 strHTML += "<b>" + tr("Transaction fee") + ":</b> " +
                            BitcoinUnits::formatHtmlWithUnit(unit, -1 * nTxFee) +
                            "<br>";
+            }
         } else {
             //
             // Mixed debit transaction
@@ -300,6 +297,9 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
         "<b>" + tr("Transaction ID") + ":</b> " + rec->getTxID() + "<br>";
     strHTML += "<b>" + tr("Transaction total size") + ":</b> " +
                QString::number(wtx.tx->GetTotalSize()) + " bytes<br>";
+    strHTML += "<b>" + tr("Transaction virtual size") + ":</b> " +
+               QString::number(GetVirtualTransactionSize(*wtx.tx)) +
+               " bytes<br>";
     strHTML += "<b>" + tr("Output index") + ":</b> " +
                QString::number(rec->getOutputIndex()) + "<br>";
 
@@ -379,11 +379,14 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
                 CTxDestination address;
                 if (ExtractDestination(vout.scriptPubKey, address)) {
                     std::string name;
-                    if (wallet.getAddress(address, &name) && !name.empty()) {
+                    if (wallet.getAddress(address, &name,
+                                          /* is_mine= */ nullptr,
+                                          /* purpose= */ nullptr) &&
+                        !name.empty()) {
                         strHTML += GUIUtil::HtmlEscape(name) + " ";
                     }
-                    strHTML +=
-                        QString::fromStdString(EncodeDestination(address));
+                    strHTML += QString::fromStdString(
+                        EncodeCashAddr(address, wallet.getChainParams()));
                 }
                 strHTML = strHTML + " " + tr("Amount") + "=" +
                           BitcoinUnits::formatHtmlWithUnit(unit, vout.nValue);

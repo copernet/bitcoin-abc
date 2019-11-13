@@ -1,4 +1,8 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+
+export LC_ALL=C
+
+set -e
 
 # User to setup for building.  Vagrant is the default
 export BUILDUSER=${BUILDUSER:-vagrant}
@@ -14,17 +18,21 @@ echo "%sudo ALL=NOPASSWD: /usr/bin/lxc-execute" >> /etc/sudoers.d/gitian-lxc
 
 # make sure that USE_LXC is always set when logging in as vagrant,
 # and configure LXC IP addresses
-echo 'export USE_LXC=1' >> /home/${BUILDUSER}/.profile
-echo 'export LXC_BRIDGE=lxcbr0' >> /home/${BUILDUSER}/.profile
-echo 'export GITIAN_HOST_IP=10.0.3.1' >> /home/${BUILDUSER}/.profile
-echo 'export LXC_GUEST_IP=10.0.3.5' >> /home/${BUILDUSER}/.profile
+{
+	echo 'export USE_LXC=1'
+	echo 'export LXC_BRIDGE=lxcbr0'
+	echo 'export GITIAN_HOST_IP=10.0.3.1'
+	echo 'export LXC_GUEST_IP=10.0.3.5'
+} >> /home/${BUILDUSER}/.profile
 
 # Setup bridge
 echo 'USE_LXC_BRIDGE="true"' > /etc/default/lxc-net
-echo 'lxc.network.type = veth' > /etc/lxc/default.conf
-echo 'lxc.network.link = lxcbr0' >> /etc/lxc/default.conf
-echo 'lxc.network.flags = up' >> /etc/lxc/default.conf
-echo 'lxc.network.hwaddr = 00:16:3e:xx:xx:xx' >> /etc/lxc/default.conf
+{
+	echo 'lxc.network.type = veth'
+	echo 'lxc.network.link = lxcbr0'
+	echo 'lxc.network.flags = up'
+	echo 'lxc.network.hwaddr = 00:16:3e:xx:xx:xx'
+} > /etc/lxc/default.conf
 service lxc-net restart
 
 # chdir into build user home directory
@@ -56,5 +64,5 @@ echo "As the user ${BUILDUSER} run the following commands to produce a linux bui
 echo "export COMMIT=v0.18.3"
 echo "export URL=https://github.com/Bitcoin-ABC/bitcoin-abc.git"
 echo "cd gitian-builder"
-echo './bin/make-base-vm --lxc --distro debian --suite stretch --arch amd64'
-echo './bin/gbuild --commit bitcoin=${COMMIT} --url bitcoin=${URL} /vagrant/contrib/gitian-descriptors/gitian-linux.yml'
+echo "./bin/make-base-vm --lxc --distro debian --suite stretch --arch amd64"
+echo "./bin/gbuild --commit bitcoin=\${COMMIT} --url bitcoin=\${URL} /vagrant/contrib/gitian-descriptors/gitian-linux.yml"

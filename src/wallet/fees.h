@@ -8,26 +8,37 @@
 #define BITCOIN_WALLET_FEES_H
 
 #include <amount.h>
+#include <feerate.h>
 
 class CCoinControl;
 class CTxMemPool;
+class CWallet;
+
+/**
+ * Return the minimum required absolute fee for this size
+ * based on the required fee rate
+ */
+Amount GetRequiredFee(const CWallet &wallet, unsigned int nTxBytes);
 
 /**
  * Estimate the minimum fee considering user set parameters
  * and the required fee
  */
-Amount GetMinimumFee(unsigned int nTxBytes, const CTxMemPool &pool);
+Amount GetMinimumFee(const CWallet &wallet, unsigned int nTxBytes,
+                     const CCoinControl &coin_control, const CTxMemPool &pool);
 
 /**
- * Estimate the minimum fee considering required fee and targetFee
+ * Return the minimum required feerate taking into account the
+ * minimum relay feerate and user set minimum transaction feerate
  */
-Amount GetMinimumFee(unsigned int nTxBytes, const CTxMemPool &pool,
-                     Amount targetFee);
+CFeeRate GetRequiredFeeRate(const CWallet &wallet);
 
 /**
- * Estimate the minimum fee considering overriden fee rate from coin control
+ * Estimate the minimum fee rate considering user set parameters
+ * and the required fee
  */
-Amount GetMinimumFee(unsigned int nTxBytes, const CTxMemPool &pool,
-                     const CCoinControl &coinControl);
+CFeeRate GetMinimumFeeRate(const CWallet &wallet,
+                           const CCoinControl &coin_control,
+                           const CTxMemPool &pool);
 
 #endif // BITCOIN_WALLET_FEES_H

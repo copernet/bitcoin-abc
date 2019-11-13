@@ -6,11 +6,12 @@
 
 #include <chainparams.h>
 
+#include <chainparamsconstants.h>
 #include <chainparamsseeds.h>
 #include <consensus/merkle.h>
 #include <tinyformat.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <cassert>
 
@@ -55,9 +56,8 @@ static CBlock CreateGenesisBlock(const char *pszTimestamp,
  *     CTxOut(nValue=50.00000000, scriptPubKey=0x5F1DF16B2B704C8A578D0B)
  *   vMerkleTree: 4a5e1e
  */
-static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce,
-                                 uint32_t nBits, int32_t nVersion,
-                                 const Amount genesisReward) {
+CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits,
+                          int32_t nVersion, const Amount genesisReward) {
     const char *pszTimestamp =
         "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks";
     const CScript genesisOutputScript =
@@ -84,6 +84,9 @@ public:
     CMainParams() {
         strNetworkID = "main";
         consensus.nSubsidyHalvingInterval = 210000;
+        // 00000000000000ce80a7e057163a4db1d5ad7b20fb6f598c9597b9665c8fb0d4 -
+        // April 1, 2012
+        consensus.BIP16Height = 173805;
         consensus.BIP34Height = 227931;
         consensus.BIP34Hash = uint256S(
             "000000000000024b89b42a942fe0d9fea3bb44ab7bd1b19115dd6a759c0808b8");
@@ -100,26 +103,15 @@ public:
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
-        // 95% of 2016
-        consensus.nRuleChangeActivationThreshold = 1916;
-        // nPowTargetTimespan / nPowTargetSpacing
-        consensus.nMinerConfirmationWindow = 2016;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
-        // January 1, 2008
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime =
-            1199145601;
-        // December 31, 2008
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout =
-            1230767999;
 
         // The best chain should have at least this much work.
-        consensus.nMinimumChainWork = uint256S(
-            "000000000000000000000000000000000000000000e8edfe3e3b6bddc3523c75");
+        consensus.nMinimumChainWork =
+            ChainParamsConstants::MAINNET_MINIMUM_CHAIN_WORK;
 
         // By default assume that the signatures in ancestors of this block are
         // valid.
-        consensus.defaultAssumeValid = uint256S(
-            "00000000000000000042fdb6b3730df1508a405ef98b1bdb857d4238b1c0a597");
+        consensus.defaultAssumeValid =
+            ChainParamsConstants::MAINNET_DEFAULT_ASSUME_VALID;
 
         // August 1, 2017 hard fork
         consensus.uahfHeight = 478558;
@@ -130,11 +122,11 @@ public:
         // November 15, 2018 hard fork
         consensus.magneticAnomalyHeight = 556766;
 
-        // Wed, 15 May 2019 12:00:00 UTC hard fork
-        consensus.greatWallActivationTime = 1557921600;
-
         // Nov 15, 2019 12:00:00 UTC protocol upgrade
         consensus.gravitonActivationTime = 1573819200;
+
+        // May 15, 2020 12:00:00 UTC protocol upgrade
+        consensus.phononActivationTime = 1589544000;
 
         /**
          * The message start string is designed to be unlikely to occur in
@@ -164,7 +156,7 @@ public:
 
         // Note that of those which support the service bits prefix, most only
         // support a subset of possible options. This is fine at runtime as
-        // we'll fall back to using them as a oneshot if they dont support the
+        // we'll fall back to using them as a oneshot if they don't support the
         // service bits we want, but we should get them updated to support all
         // service bits wanted by any release ASAP to avoid it where possible.
         // Bitcoin ABC seeder
@@ -177,8 +169,8 @@ public:
         vSeeds.emplace_back("seed.bitprim.org");
         // Amaury SÉCHET
         vSeeds.emplace_back("seed.deadalnix.me");
-        // criptolayer.net
-        vSeeds.emplace_back("seeder.criptolayer.net");
+        // BCHD
+        vSeeds.emplace_back("seed.bchd.cash");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<uint8_t>(1, 0);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<uint8_t>(1, 5);
@@ -234,6 +226,9 @@ public:
                 // Magnetic anomaly activation.
                 {556767, uint256S("0000000000000000004626ff6e3b936941d341c5932e"
                                   "ce4357eeccac44e6d56c")},
+                // Great wall activation.
+                {582680, uint256S("000000000000000001b4b8e36aec7d4f9671a47872cb"
+                                  "9a74dc16ca398c7dcc18")},
             }};
 
         // Data as of block
@@ -243,7 +238,7 @@ public:
             // UNIX timestamp of last known number of transactions.
             1522608016,
             // Total number of transactions between genesis and that timestamp
-            // (the tx=... number in the SetBestChain debug.log lines)
+            // (the tx=... number in the ChainStateFlushed debug.log lines)
             248589038,
             // Estimated number of transactions per second after that timestamp.
             3.2};
@@ -258,6 +253,8 @@ public:
     CTestNetParams() {
         strNetworkID = "test";
         consensus.nSubsidyHalvingInterval = 210000;
+        // 00000000040b4e986385315e14bee30ad876d8b47f748025b26683116d21aa65
+        consensus.BIP16Height = 514;
         consensus.BIP34Height = 21111;
         consensus.BIP34Hash = uint256S(
             "0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8");
@@ -274,26 +271,15 @@ public:
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = false;
-        // 75% for testchains
-        consensus.nRuleChangeActivationThreshold = 1512;
-        // nPowTargetTimespan / nPowTargetSpacing
-        consensus.nMinerConfirmationWindow = 2016;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
-        // January 1, 2008
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime =
-            1199145601;
-        // December 31, 2008
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout =
-            1230767999;
 
         // The best chain should have at least this much work.
-        consensus.nMinimumChainWork = uint256S(
-            "000000000000000000000000000000000000000000000043cb761ba833f844c5");
+        consensus.nMinimumChainWork =
+            ChainParamsConstants::TESTNET_MINIMUM_CHAIN_WORK;
 
         // By default assume that the signatures in ancestors of this block are
         // valid.
-        consensus.defaultAssumeValid = uint256S(
-            "00000000000002cb911c0a756a24c2fe6c1a29acaede3569ce430b95d8ff012d");
+        consensus.defaultAssumeValid =
+            ChainParamsConstants::TESTNET_DEFAULT_ASSUME_VALID;
 
         // August 1, 2017 hard fork
         consensus.uahfHeight = 1155875;
@@ -304,11 +290,11 @@ public:
         // November 15, 2018 hard fork
         consensus.magneticAnomalyHeight = 1267996;
 
-        // Wed, 15 May 2019 12:00:00 UTC hard fork
-        consensus.greatWallActivationTime = 1557921600;
-
         // Nov 15, 2019 12:00:00 UTC protocol upgrade
         consensus.gravitonActivationTime = 1573819200;
+
+        // May 15, 2020 12:00:00 UTC protocol upgrade
+        consensus.phononActivationTime = 1589544000;
 
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
@@ -342,8 +328,8 @@ public:
         vSeeds.emplace_back("testnet-seed.bitprim.org");
         // Amaury SÉCHET
         vSeeds.emplace_back("testnet-seed.deadalnix.me");
-        // criptolayer.net
-        vSeeds.emplace_back("testnet-seeder.criptolayer.net");
+        // BCHD
+        vSeeds.emplace_back("testnet-seed.bchd.cash");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<uint8_t>(1, 111);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<uint8_t>(1, 196);
@@ -368,6 +354,9 @@ public:
                 // Nov, 13. DAA activation block.
                 {1188697, uint256S("0000000000170ed0918077bde7b4d36cc4c91be69fa"
                                    "09211f748240dabe047fb")},
+                // Great wall activation.
+                {1303885, uint256S("00000000000000479138892ef0e4fa478ccc938fb94"
+                                   "df862ef5bde7e8dee23d3")},
             }};
 
         // Data as of block
@@ -385,6 +374,8 @@ public:
     CRegTestParams() {
         strNetworkID = "regtest";
         consensus.nSubsidyHalvingInterval = 150;
+        // always enforce P2SH BIP16 on regtest
+        consensus.BIP16Height = 0;
         // BIP34 has not activated on regtest (far in the future so block v1 are
         // not rejected in tests)
         consensus.BIP34Height = 100000000;
@@ -402,14 +393,6 @@ public:
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = true;
-        // 75% for testchains
-        consensus.nRuleChangeActivationThreshold = 108;
-        // Faster than normal for regtest (144 instead of 2016)
-        consensus.nMinerConfirmationWindow = 144;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime = 0;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout =
-            999999999999ULL;
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");
@@ -427,11 +410,11 @@ public:
         // November 15, 2018 hard fork is always on on regtest.
         consensus.magneticAnomalyHeight = 0;
 
-        // Wed, 15 May 2019 12:00:00 UTC hard fork
-        consensus.greatWallActivationTime = 1557921600;
-
         // Nov 15, 2019 12:00:00 UTC protocol upgrade
         consensus.gravitonActivationTime = 1573819200;
+
+        // May 15, 2020 12:00:00 UTC protocol upgrade
+        consensus.phononActivationTime = 1589544000;
 
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;

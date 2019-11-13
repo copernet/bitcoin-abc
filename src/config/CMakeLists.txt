@@ -7,22 +7,15 @@ include(CheckIncludeFiles)
 include(CheckSymbolExists)
 include(CheckCXXSourceCompiles)
 
-# Package informations
-set(PACKAGE_NAME "Bitcoin ABC")
-
 # Version
-set(CLIENT_VERSION_MAJOR 0)
-set(CLIENT_VERSION_MINOR 19)
-set(CLIENT_VERSION_REVISION 5)
-set(CLIENT_VERSION_BUILD 0)
+set(CLIENT_VERSION_MAJOR ${bitcoin-abc_VERSION_MAJOR})
+set(CLIENT_VERSION_MINOR ${bitcoin-abc_VERSION_MINOR})
+set(CLIENT_VERSION_REVISION ${bitcoin-abc_VERSION_PATCH})
 
 option(CLIENT_VERSION_IS_RELEASE "Build a release version" OFF)
 
-# Copyright
-set(COPYRIGHT_YEAR 2019)
-set(COPYRIGHT_HOLDERS "The %s developers")
-set(COPYRIGHT_HOLDERS_SUBSTITUTION Bitcoin)
-string(REPLACE "%s" ${COPYRIGHT_HOLDERS_SUBSTITUTION} COPYRIGHT_HOLDERS_FINAL ${COPYRIGHT_HOLDERS})
+# Generate the version.h file
+configure_file(version.h.cmake.in version.h ESCAPE_QUOTES)
 
 # Endianness
 check_include_files("endian.h" HAVE_ENDIAN_H)
@@ -124,6 +117,10 @@ check_symbol_exists(daemon "unistd.h" HAVE_DECL_DAEMON)
 check_symbol_exists(getentropy "unistd.h" HAVE_GETENTROPY)
 check_symbol_exists(getentropy "sys/random.h" HAVE_GETENTROPY_RAND)
 
+# getifaddrs and freeifaddrs may be unavailable with some Android versions
+check_symbol_exists(getifaddrs "sys/types.h;ifaddrs.h" HAVE_DECL_GETIFADDRS)
+check_symbol_exists(freeifaddrs "sys/types.h;ifaddrs.h" HAVE_DECL_FREEIFADDRS)
+
 check_cxx_source_compiles("
 	#include <unistd.h>  /* for syscall */
 	#include <sys/syscall.h>  /* for SYS_getrandom */
@@ -143,6 +140,59 @@ check_cxx_source_compiles("
 	}
 " HAVE_SYSCTL_ARND)
 
+check_cxx_source_compiles("
+    #include <cstdint>
+    #include <type_traits>
+    int main() {
+        static_assert(std::is_same<int8_t, char>::value, \"\");
+        return 0;
+    }
+" CHAR_EQUALS_INT8)
+
+check_cxx_source_compiles("
+    #include <sys/types.h>
+    #include <type_traits>
+    int main() {
+        static_assert(sizeof(off_t) == 8, \"\");
+        return 0;
+    }
+" HAVE_LARGE_FILE_SUPPORT)
+
+check_cxx_source_compiles("
+    __attribute__((visibility(\"default\"))) int main() {
+        return 0;
+    }
+" HAVE_FUNC_ATTRIBUTE_VISIBILITY)
+
+check_cxx_source_compiles("
+    __declspec(dllexport) int main() {
+        return 0;
+    }
+" HAVE_FUNC_ATTRIBUTE_DLLEXPORT)
+
+#__fdelt_chk's params and return type have changed from long unsigned int to
+# long int. See which one is present here.
+include(CheckPrototypeDefinition)
+
+set(CMAKE_REQUIRED_DEFINITIONS -D_FORTIFY_SOURCE=2)
+# Without some optimization the compiler won't detect the prototype conflict
+# and always succeed to build.
+set(CMAKE_REQUIRED_FLAGS -O2)
+
+check_prototype_definition(
+	__fdelt_warn
+	"extern long unsigned int __fdelt_warn(long unsigned int a)"
+	"0"
+	"sys/select.h"
+	FDELT_PROTOTYPE_LONG_UNSIGNED_INT
+)
+
+if(FDELT_PROTOTYPE_LONG_UNSIGNED_INT)
+	set(FDELT_TYPE "long unsigned int")
+else()
+	set(FDELT_TYPE "long int")
+endif()
+
 # OpenSSL functionality
 set(CMAKE_REQUIRED_INCLUDES ${OPENSSL_CRYPTO_INCLUDES})
 set(CMAKE_REQUIRED_LIBRARIES ${OPENSSL_CRYPTO_LIBRARY})
@@ -153,6 +203,24 @@ set(ENABLE_WALLET ${BUILD_BITCOIN_WALLET})
 
 # Activate ZeroMQ
 set(ENABLE_ZMQ ${BUILD_BITCOIN_ZMQ})
+
+# Try to find libqrencode
+# Only used in the wallet GUI
+if(ENABLE_QRCODE AND BUILD_BITCOIN_WALLET AND BUILD_BITCOIN_QT)
+	find_package(QREncode REQUIRED)
+	set(USE_QRCODE 1 CACHE INTERNAL "QR code is enabled")
+endif()
+
+# Try to find miniupnpc
+if(ENABLE_UPNP)
+	find_package(MiniUPnPc REQUIRED)
+
+	# The expected behavior is as follow:
+	#  - If UPnP is enabled USE_UPNP must be defined
+	#  - If UPnP should be the default port map method, USE_UPNP should be
+	#    defined to 1, otherwise it should be defined to 0.
+	set(USE_UPNP ${START_WITH_UPNP} CACHE INTERNAL "UPnP is enabled")
+endif()
 
 # Generate the config
 configure_file(bitcoin-config.h.cmake.in bitcoin-config.h ESCAPE_QUOTES)

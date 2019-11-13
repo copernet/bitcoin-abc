@@ -2,33 +2,31 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "clientmodel.h"
+#include <qt/clientmodel.h>
 
-#include "bantablemodel.h"
-#include "guiconstants.h"
-#include "guiutil.h"
-#include "peertablemodel.h"
-
-#include "chain.h"
-#include "chainparams.h"
-#include "checkpoints.h"
-#include "clientversion.h"
-#include "config.h"
-#include "interfaces/handler.h"
-#include "interfaces/node.h"
-#include "net.h"
-#include "txmempool.h"
-#include "ui_interface.h"
-#include "util.h"
-#include "validation.h"
-#include "warnings.h"
-
-#include <cstdint>
+#include <chain.h>
+#include <chainparams.h>
+#include <checkpoints.h>
+#include <clientversion.h>
+#include <config.h>
+#include <interfaces/handler.h>
+#include <interfaces/node.h>
+#include <net.h>
+#include <netbase.h>
+#include <qt/bantablemodel.h>
+#include <qt/guiconstants.h>
+#include <qt/guiutil.h>
+#include <qt/peertablemodel.h>
+#include <txmempool.h>
+#include <ui_interface.h>
+#include <util/system.h>
+#include <validation.h>
+#include <warnings.h>
 
 #include <QDebug>
 #include <QTimer>
 
-class CBlockIndex;
+#include <cstdint>
 
 static int64_t nLastHeaderTipUpdateNotification = 0;
 static int64_t nLastBlockTipUpdateNotification = 0;
@@ -42,7 +40,7 @@ ClientModel::ClientModel(interfaces::Node &node, OptionsModel *_optionsModel,
     peerTableModel = new PeerTableModel(m_node, this);
     banTableModel = new BanTableModel(m_node, this);
     pollTimer = new QTimer(this);
-    connect(pollTimer, SIGNAL(timeout()), this, SLOT(updateTimer()));
+    connect(pollTimer, &QTimer::timeout, this, &ClientModel::updateTimer);
     pollTimer->start(MODEL_UPDATE_DELAY);
 
     subscribeToCoreSignals();
@@ -204,6 +202,10 @@ QString ClientModel::dataDir() const {
     return GUIUtil::boostPathToQString(GetDataDir());
 }
 
+QString ClientModel::blocksDir() const {
+    return GUIUtil::boostPathToQString(GetBlocksDir());
+}
+
 void ClientModel::updateBanlist() {
     banTableModel->refresh();
 }
@@ -295,7 +297,7 @@ static void BlockTipChanged(ClientModel *clientmodel, bool initialSync,
     }
     // if we are in-sync, update the UI regardless of last update time
     if (!initialSync || now - nLastUpdateNotification > MODEL_UPDATE_DELAY) {
-        // pass a async signal to the UI thread
+        // pass an async signal to the UI thread
         QMetaObject::invokeMethod(
             clientmodel, "numBlocksChanged", Qt::QueuedConnection,
             Q_ARG(int, height),
@@ -307,22 +309,24 @@ static void BlockTipChanged(ClientModel *clientmodel, bool initialSync,
 
 void ClientModel::subscribeToCoreSignals() {
     // Connect signals to client
-    m_handler_show_progress =
-        m_node.handleShowProgress(boost::bind(ShowProgress, this, _1, _2));
+    m_handler_show_progress = m_node.handleShowProgress(std::bind(
+        ShowProgress, this, std::placeholders::_1, std::placeholders::_2));
     m_handler_notify_num_connections_changed =
-        m_node.handleNotifyNumConnectionsChanged(
-            boost::bind(NotifyNumConnectionsChanged, this, _1));
+        m_node.handleNotifyNumConnectionsChanged(std::bind(
+            NotifyNumConnectionsChanged, this, std::placeholders::_1));
     m_handler_notify_network_active_changed =
         m_node.handleNotifyNetworkActiveChanged(
-            boost::bind(NotifyNetworkActiveChanged, this, _1));
+            std::bind(NotifyNetworkActiveChanged, this, std::placeholders::_1));
     m_handler_notify_alert_changed =
-        m_node.handleNotifyAlertChanged(boost::bind(NotifyAlertChanged, this));
+        m_node.handleNotifyAlertChanged(std::bind(NotifyAlertChanged, this));
     m_handler_banned_list_changed =
-        m_node.handleBannedListChanged(boost::bind(BannedListChanged, this));
-    m_handler_notify_block_tip = m_node.handleNotifyBlockTip(
-        boost::bind(BlockTipChanged, this, _1, _2, _3, _4, false));
-    m_handler_notify_header_tip = m_node.handleNotifyHeaderTip(
-        boost::bind(BlockTipChanged, this, _1, _2, _3, _4, true));
+        m_node.handleBannedListChanged(std::bind(BannedListChanged, this));
+    m_handler_notify_block_tip = m_node.handleNotifyBlockTip(std::bind(
+        BlockTipChanged, this, std::placeholders::_1, std::placeholders::_2,
+        std::placeholders::_3, std::placeholders::_4, false));
+    m_handler_notify_header_tip = m_node.handleNotifyHeaderTip(std::bind(
+        BlockTipChanged, this, std::placeholders::_1, std::placeholders::_2,
+        std::placeholders::_3, std::placeholders::_4, true));
 }
 
 void ClientModel::unsubscribeFromCoreSignals() {
@@ -334,4 +338,14 @@ void ClientModel::unsubscribeFromCoreSignals() {
     m_handler_banned_list_changed->disconnect();
     m_handler_notify_block_tip->disconnect();
     m_handler_notify_header_tip->disconnect();
+}
+
+bool ClientModel::getProxyInfo(std::string &ip_port) const {
+    proxyType ipv4, ipv6;
+    if (m_node.getProxy((Network)1, ipv4) &&
+        m_node.getProxy((Network)2, ipv6)) {
+        ip_port = ipv4.proxy.ToStringIPPort();
+        return true;
+    }
+    return false;
 }

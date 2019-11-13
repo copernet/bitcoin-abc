@@ -6,7 +6,7 @@
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <key.h>
-#include <policy/policy.h> // For STANDARD_CHECKDATASIG_VERIFY_FLAGS.
+#include <policy/policy.h>
 #include <pubkey.h>
 #include <script/interpreter.h>
 #include <script/script.h>
@@ -30,19 +30,24 @@ BOOST_FIXTURE_TEST_SUITE(sigopcount_tests, BasicTestingSetup)
 
 void CheckScriptSigOps(const CScript &script, uint32_t accurate_sigops,
                        uint32_t inaccurate_sigops, uint32_t datasigops) {
-    const uint32_t stdflags = STANDARD_SCRIPT_VERIFY_FLAGS;
-    const uint32_t datasigflags = STANDARD_CHECKDATASIG_VERIFY_FLAGS;
+    const uint32_t nodatasigflags =
+        STANDARD_SCRIPT_VERIFY_FLAGS & ~SCRIPT_VERIFY_CHECKDATASIG_SIGOPS;
+    const uint32_t datasigflags =
+        STANDARD_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_CHECKDATASIG_SIGOPS;
 
-    BOOST_CHECK_EQUAL(script.GetSigOpCount(stdflags, false), inaccurate_sigops);
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(nodatasigflags, false),
+                      inaccurate_sigops);
     BOOST_CHECK_EQUAL(script.GetSigOpCount(datasigflags, false),
                       inaccurate_sigops + datasigops);
-    BOOST_CHECK_EQUAL(script.GetSigOpCount(stdflags, true), accurate_sigops);
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(nodatasigflags, true),
+                      accurate_sigops);
     BOOST_CHECK_EQUAL(script.GetSigOpCount(datasigflags, true),
                       accurate_sigops + datasigops);
 
     const CScript p2sh = GetScriptForDestination(CScriptID(script));
     const CScript scriptSig = CScript() << OP_0 << Serialize(script);
-    BOOST_CHECK_EQUAL(p2sh.GetSigOpCount(stdflags, scriptSig), accurate_sigops);
+    BOOST_CHECK_EQUAL(p2sh.GetSigOpCount(nodatasigflags, scriptSig),
+                      accurate_sigops);
     BOOST_CHECK_EQUAL(p2sh.GetSigOpCount(datasigflags, scriptSig),
                       accurate_sigops + datasigops);
 
@@ -51,7 +56,8 @@ void CheckScriptSigOps(const CScript &script, uint32_t accurate_sigops,
     BOOST_CHECK_EQUAL(p2sh.GetSigOpCount(SCRIPT_VERIFY_NONE, scriptSig), 0U);
 
     // Check that GetSigOpCount report the exact count when not passed a P2SH.
-    BOOST_CHECK_EQUAL(script.GetSigOpCount(stdflags, p2sh), accurate_sigops);
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(nodatasigflags, p2sh),
+                      accurate_sigops);
     BOOST_CHECK_EQUAL(script.GetSigOpCount(datasigflags, p2sh),
                       accurate_sigops + datasigops);
     BOOST_CHECK_EQUAL(script.GetSigOpCount(SCRIPT_VERIFY_NONE, p2sh),
@@ -87,10 +93,14 @@ BOOST_AUTO_TEST_CASE(GetSigOpCount) {
     CScript scriptSig2;
     scriptSig2 << OP_1 << ToByteVector(dummy) << ToByteVector(dummy)
                << Serialize(s3);
-    BOOST_CHECK_EQUAL(
-        p2sh.GetSigOpCount(STANDARD_SCRIPT_VERIFY_FLAGS, scriptSig2), 3U);
-    BOOST_CHECK_EQUAL(
-        p2sh.GetSigOpCount(STANDARD_CHECKDATASIG_VERIFY_FLAGS, scriptSig2), 3U);
+    BOOST_CHECK_EQUAL(p2sh.GetSigOpCount((STANDARD_SCRIPT_VERIFY_FLAGS &
+                                          ~SCRIPT_VERIFY_CHECKDATASIG_SIGOPS),
+                                         scriptSig2),
+                      3U);
+    BOOST_CHECK_EQUAL(p2sh.GetSigOpCount(STANDARD_SCRIPT_VERIFY_FLAGS |
+                                             SCRIPT_VERIFY_CHECKDATASIG_SIGOPS,
+                                         scriptSig2),
+                      3U);
     BOOST_CHECK_EQUAL(p2sh.GetSigOpCount(SCRIPT_VERIFY_NONE, scriptSig2), 0U);
 
     const CScript s4 = CScript(s1) << OP_IF << OP_CHECKDATASIG << OP_ENDIF;
@@ -102,28 +112,28 @@ BOOST_AUTO_TEST_CASE(GetSigOpCount) {
 
 /**
  * Verifies script execution of the zeroth scriptPubKey of tx output and zeroth
- * scriptSig and witness of tx input.
+ * scriptSig of tx input.
  */
-ScriptError VerifyWithFlag(const CTransaction &output,
-                           const CMutableTransaction &input, int flags) {
+static ScriptError VerifyWithFlag(const CTransaction &output,
+                                  const CMutableTransaction &input, int flags) {
     ScriptError error;
     CTransaction inputi(input);
     bool ret = VerifyScript(
         inputi.vin[0].scriptSig, output.vout[0].scriptPubKey, flags,
         TransactionSignatureChecker(&inputi, 0, output.vout[0].nValue), &error);
-    BOOST_CHECK_EQUAL((ret == true), (error == SCRIPT_ERR_OK));
+    BOOST_CHECK_EQUAL((ret == true), (error == ScriptError::OK));
 
     return error;
 }
 
 /**
- * Builds a creationTx from scriptPubKey and a spendingTx from scriptSig and
- * witness such that spendingTx spends output zero of creationTx. Also inserts
+ * Builds a creationTx from scriptPubKey and a spendingTx from scriptSig
+ * such that spendingTx spends output zero of creationTx. Also inserts
  * creationTx's output into the coins view.
  */
-void BuildTxs(CMutableTransaction &spendingTx, CCoinsViewCache &coins,
-              CMutableTransaction &creationTx, const CScript &scriptPubKey,
-              const CScript &scriptSig) {
+static void BuildTxs(CMutableTransaction &spendingTx, CCoinsViewCache &coins,
+                     CMutableTransaction &creationTx,
+                     const CScript &scriptPubKey, const CScript &scriptSig) {
     creationTx.nVersion = 1;
     creationTx.vin.resize(1);
     creationTx.vin[0].prevout = COutPoint();
@@ -184,9 +194,8 @@ BOOST_AUTO_TEST_CASE(GetTxSigOpCost) {
             MAX_PUBKEYS_PER_MULTISIG);
         // Sanity check: script verification fails because of an invalid
         // signature.
-        BOOST_CHECK_EQUAL(
-            VerifyWithFlag(CTransaction(creationTx), spendingTx, flags),
-            SCRIPT_ERR_CHECKMULTISIGVERIFY);
+        BOOST_CHECK(VerifyWithFlag(CTransaction(creationTx), spendingTx,
+                                   flags) == ScriptError::CHECKMULTISIGVERIFY);
 
         // Make sure non P2SH sigops are counted even if the flag for P2SH is
         // not passed in.
@@ -211,9 +220,8 @@ BOOST_AUTO_TEST_CASE(GetTxSigOpCost) {
         BOOST_CHECK_EQUAL(
             GetTransactionSigOpCount(CTransaction(spendingTx), coins, flags),
             2);
-        BOOST_CHECK_EQUAL(
-            VerifyWithFlag(CTransaction(creationTx), spendingTx, flags),
-            SCRIPT_ERR_CHECKMULTISIGVERIFY);
+        BOOST_CHECK(VerifyWithFlag(CTransaction(creationTx), spendingTx,
+                                   flags) == ScriptError::CHECKMULTISIGVERIFY);
 
         // Make sure P2SH sigops are not counted if the flag for P2SH is not
         // passed in.
@@ -246,7 +254,7 @@ BOOST_AUTO_TEST_CASE(test_max_sigops_per_tx) {
     CMutableTransaction tx;
     tx.nVersion = 1;
     tx.vin.resize(1);
-    tx.vin[0].prevout = COutPoint(InsecureRand256(), 0);
+    tx.vin[0].prevout = COutPoint(TxId(InsecureRand256()), 0);
     tx.vin[0].scriptSig = CScript();
     tx.vout.resize(1);
     tx.vout[0].nValue = SATOSHI;

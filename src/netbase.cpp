@@ -9,8 +9,10 @@
 #include <random.h>
 #include <sync.h>
 #include <uint256.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
+
+#include <tinyformat.h>
 
 #include <atomic>
 
@@ -23,9 +25,9 @@
 #endif
 
 // Settings
-static proxyType proxyInfo[NET_MAX];
-static proxyType nameProxy;
 static CCriticalSection cs_proxyInfos;
+static proxyType proxyInfo[NET_MAX] GUARDED_BY(cs_proxyInfos);
+static proxyType nameProxy GUARDED_BY(cs_proxyInfos);
 int nConnectTimeout = DEFAULT_CONNECT_TIMEOUT;
 bool fNameLookup = DEFAULT_NAME_LOOKUP;
 
@@ -156,7 +158,7 @@ bool Lookup(const char *pszName, std::vector<CService> &vAddr, int portDefault,
         return false;
     }
     int port = portDefault;
-    std::string hostname = "";
+    std::string hostname;
     SplitHostPort(std::string(pszName), port, hostname);
 
     std::vector<CNetAddr> vIP;
@@ -205,10 +207,10 @@ enum SOCKSVersion : uint8_t { SOCKS4 = 0x04, SOCKS5 = 0x05 };
 
 /** Values defined for METHOD in RFC1928 */
 enum SOCKS5Method : uint8_t {
-    NOAUTH = 0x00,        //! No authentication required
-    GSSAPI = 0x01,        //! GSSAPI
-    USER_PASS = 0x02,     //! Username/password
-    NO_ACCEPTABLE = 0xff, //! No acceptable methods
+    NOAUTH = 0x00,        //!< No authentication required
+    GSSAPI = 0x01,        //!< GSSAPI
+    USER_PASS = 0x02,     //!< Username/password
+    NO_ACCEPTABLE = 0xff, //!< No acceptable methods
 };
 
 /** Values defined for CMD in RFC1928 */
@@ -220,15 +222,15 @@ enum SOCKS5Command : uint8_t {
 
 /** Values defined for REP in RFC1928 */
 enum SOCKS5Reply : uint8_t {
-    SUCCEEDED = 0x00,        //! Succeeded
-    GENFAILURE = 0x01,       //! General failure
-    NOTALLOWED = 0x02,       //! Connection not allowed by ruleset
-    NETUNREACHABLE = 0x03,   //! Network unreachable
-    HOSTUNREACHABLE = 0x04,  //! Network unreachable
-    CONNREFUSED = 0x05,      //! Connection refused
-    TTLEXPIRED = 0x06,       //! TTL expired
-    CMDUNSUPPORTED = 0x07,   //! Command not supported
-    ATYPEUNSUPPORTED = 0x08, //! Address type not supported
+    SUCCEEDED = 0x00,        //!< Succeeded
+    GENFAILURE = 0x01,       //!< General failure
+    NOTALLOWED = 0x02,       //!< Connection not allowed by ruleset
+    NETUNREACHABLE = 0x03,   //!< Network unreachable
+    HOSTUNREACHABLE = 0x04,  //!< Network unreachable
+    CONNREFUSED = 0x05,      //!< Connection refused
+    TTLEXPIRED = 0x06,       //!< TTL expired
+    CMDUNSUPPORTED = 0x07,   //!< Command not supported
+    ATYPEUNSUPPORTED = 0x08, //!< Address type not supported
 };
 
 /** Values defined for ATYPE in RFC1928 */
@@ -522,8 +524,19 @@ SOCKET CreateSocket(const CService &addrConnect) {
     return hSocket;
 }
 
+template <typename... Args>
+static void LogConnectFailure(bool manual_connection, const char *fmt,
+                              const Args &... args) {
+    std::string error_message = tfm::format(fmt, args...);
+    if (manual_connection) {
+        LogPrintf("%s\n", error_message);
+    } else {
+        LogPrint(BCLog::NET, "%s\n", error_message);
+    }
+}
+
 bool ConnectSocketDirectly(const CService &addrConnect, const SOCKET &hSocket,
-                           int nTimeout) {
+                           int nTimeout, bool manual_connection) {
     struct sockaddr_storage sockaddr;
     socklen_t len = sizeof(sockaddr);
     if (hSocket == INVALID_SOCKET) {
@@ -567,8 +580,10 @@ bool ConnectSocketDirectly(const CService &addrConnect, const SOCKET &hSocket,
                 return false;
             }
             if (nRet != 0) {
-                LogPrintf("connect() to %s failed after select(): %s\n",
-                          addrConnect.ToString(), NetworkErrorString(nRet));
+                LogConnectFailure(manual_connection,
+                                  "connect() to %s failed after select(): %s",
+                                  addrConnect.ToString(),
+                                  NetworkErrorString(nRet));
                 return false;
             }
         }
@@ -578,8 +593,9 @@ bool ConnectSocketDirectly(const CService &addrConnect, const SOCKET &hSocket,
         else
 #endif
         {
-            LogPrintf("connect() to %s failed: %s\n", addrConnect.ToString(),
-                      NetworkErrorString(WSAGetLastError()));
+            LogConnectFailure(manual_connection, "connect() to %s failed: %s",
+                              addrConnect.ToString(),
+                              NetworkErrorString(WSAGetLastError()));
             return false;
         }
     }
@@ -643,7 +659,7 @@ bool ConnectThroughProxy(const proxyType &proxy, const std::string &strDest,
                          int port, const SOCKET &hSocket, int nTimeout,
                          bool *outProxyConnectionFailed) {
     // first connect to proxy server
-    if (!ConnectSocketDirectly(proxy.proxy, hSocket, nTimeout)) {
+    if (!ConnectSocketDirectly(proxy.proxy, hSocket, nTimeout, true)) {
         if (outProxyConnectionFailed) {
             *outProxyConnectionFailed = true;
         }
@@ -663,6 +679,7 @@ bool ConnectThroughProxy(const proxyType &proxy, const std::string &strDest,
     }
     return true;
 }
+
 bool LookupSubNet(const char *pszName, CSubNet &ret) {
     std::string strSubnet(pszName);
     size_t slash = strSubnet.find_last_of('/');
@@ -713,14 +730,17 @@ std::string NetworkErrorString(int err) {
 #else
 std::string NetworkErrorString(int err) {
     char buf[256];
-    const char *s = buf;
     buf[0] = 0;
-/* Too bad there are two incompatible implementations of the
- * thread-safe strerror. */
+    /**
+     * Too bad there are two incompatible implementations of the
+     * thread-safe strerror.
+     */
+    const char *s;
 #ifdef STRERROR_R_CHAR_P
     /* GNU variant can return a pointer outside the passed buffer */
     s = strerror_r(err, buf, sizeof(buf));
 #else
+    s = buf;
     /* POSIX variant always returns message in buffer */
     if (strerror_r(err, buf, sizeof(buf))) {
         buf[0] = 0;
@@ -739,6 +759,10 @@ bool CloseSocket(SOCKET &hSocket) {
 #else
     int ret = close(hSocket);
 #endif
+    if (ret) {
+        LogPrintf("Socket close failed: %d. Error: %s\n", hSocket,
+                  NetworkErrorString(WSAGetLastError()));
+    }
     hSocket = INVALID_SOCKET;
     return ret != SOCKET_ERROR;
 }

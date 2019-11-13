@@ -4,13 +4,17 @@
 
 #include <qt/transactionrecord.h>
 
-#include <chain.h>
+#include <cashaddrenc.h>
+#include <chain.h>       // For MAX_BLOCK_TIME_GAP
+#include <chainparams.h> // For Params()
 #include <consensus/consensus.h>
-#include <dstencode.h>
 #include <interfaces/wallet.h>
+#include <key_io.h>
 #include <timedata.h>
 #include <validation.h>
 #include <wallet/finaltx.h>
+
+#include <QDateTime>
 
 #include <cstdint>
 
@@ -52,7 +56,8 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
                 if (wtx.txout_address_is_mine[i]) {
                     // Received by Bitcoin Address
                     sub.type = TransactionRecord::RecvWithAddress;
-                    sub.address = EncodeDestination(wtx.txout_address[i]);
+                    sub.address =
+                        EncodeCashAddr(wtx.txout_address[i], Params());
                 } else {
                     // Received by IP connection (deprecated features), or a
                     // multisignature or other non-simple transaction
@@ -70,7 +75,7 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
     } else {
         bool involvesWatchAddress = false;
         isminetype fAllFromMe = ISMINE_SPENDABLE;
-        for (isminetype mine : wtx.txin_is_mine) {
+        for (const isminetype mine : wtx.txin_is_mine) {
             if (mine & ISMINE_WATCH_ONLY) {
                 involvesWatchAddress = true;
             }
@@ -80,7 +85,7 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
         }
 
         isminetype fAllToMe = ISMINE_SPENDABLE;
-        for (isminetype mine : wtx.txout_is_mine) {
+        for (const isminetype mine : wtx.txout_is_mine) {
             if (mine & ISMINE_WATCH_ONLY) {
                 involvesWatchAddress = true;
             }
@@ -119,7 +124,8 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
                 if (!boost::get<CNoDestination>(&wtx.txout_address[nOut])) {
                     // Sent to Bitcoin Address
                     sub.type = TransactionRecord::SendToAddress;
-                    sub.address = EncodeDestination(wtx.txout_address[nOut]);
+                    sub.address =
+                        EncodeCashAddr(wtx.txout_address[nOut], Params());
                 } else {
                     // Sent to IP, or other non-address transaction like OP_EVAL
                     sub.type = TransactionRecord::SendToOther;
@@ -151,7 +157,7 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
 }
 
 void TransactionRecord::updateStatus(const interfaces::WalletTxStatus &wtx,
-                                     int numBlocks, int64_t adjustedTime) {
+                                     int numBlocks, int64_t block_time) {
     // Determine transaction status
 
     // Sort order, unrecorded transactions sort to the top
@@ -161,7 +167,10 @@ void TransactionRecord::updateStatus(const interfaces::WalletTxStatus &wtx,
     status.depth = wtx.depth_in_main_chain;
     status.cur_num_blocks = numBlocks;
 
-    if (!wtx.is_final) {
+    const bool up_to_date =
+        (int64_t(QDateTime::currentMSecsSinceEpoch()) / 1000 - block_time <
+         MAX_BLOCK_TIME_GAP);
+    if (up_to_date && !wtx.is_final) {
         if (wtx.lock_time < LOCKTIME_THRESHOLD) {
             status.status = TransactionStatus::OpenUntilBlock;
             status.open_for = wtx.lock_time - numBlocks;
@@ -176,12 +185,6 @@ void TransactionRecord::updateStatus(const interfaces::WalletTxStatus &wtx,
 
             if (wtx.is_in_main_chain) {
                 status.matures_in = wtx.blocks_to_maturity;
-
-                // Check if the block was requested by anyone
-                if (adjustedTime - wtx.time_received > 2 * 60 &&
-                    wtx.request_count == 0) {
-                    status.status = TransactionStatus::MaturesWarning;
-                }
             } else {
                 status.status = TransactionStatus::NotAccepted;
             }
@@ -191,9 +194,6 @@ void TransactionRecord::updateStatus(const interfaces::WalletTxStatus &wtx,
     } else {
         if (status.depth < 0) {
             status.status = TransactionStatus::Conflicted;
-        } else if (adjustedTime - wtx.time_received > 2 * 60 &&
-                   wtx.request_count == 0) {
-            status.status = TransactionStatus::Offline;
         } else if (status.depth == 0) {
             status.status = TransactionStatus::Unconfirmed;
             if (wtx.is_abandoned) {

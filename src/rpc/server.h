@@ -13,7 +13,7 @@
 #include <rpc/protocol.h>
 #include <rwcollection.h>
 #include <uint256.h>
-#include <util.h>
+#include <util/system.h>
 
 #include <cstdint>
 #include <functional>
@@ -33,17 +33,14 @@ void OnStarted(std::function<void()> slot);
 void OnStopped(std::function<void()> slot);
 } // namespace RPCServerSignals
 
-class CBlockIndex;
 class Config;
-class CNetAddr;
 
 /**
  * Wrapper for UniValue::VType, which includes typeAny: used to denote don't
- * care type. Only used by RPCTypeCheckObj.
+ * care type.
  */
 struct UniValueType {
-    explicit UniValueType(UniValue::VType _type)
-        : typeAny(false), type(_type) {}
+    UniValueType(UniValue::VType _type) : typeAny(false), type(_type) {}
     UniValueType() : typeAny(true) {}
     bool typeAny;
     UniValue::VType type;
@@ -93,7 +90,7 @@ void SetRPCWarmupFinished();
 /**
  * Returns the current warmup state
  */
-bool RPCIsInWarmup(std::string *statusOut);
+bool RPCIsInWarmup(std::string *outStatus);
 
 /**
  * Type-check arguments; throws JSONRPCError if wrong type given. Does not check
@@ -101,13 +98,14 @@ bool RPCIsInWarmup(std::string *statusOut);
  * correct type.
  */
 void RPCTypeCheck(const UniValue &params,
-                  const std::list<UniValue::VType> &typesExpected,
+                  const std::list<UniValueType> &typesExpected,
                   bool fAllowNull = false);
 
 /**
  * Type-check one argument; throws JSONRPCError if wrong type given.
  */
-void RPCTypeCheckArgument(const UniValue &value, UniValue::VType typeExpected);
+void RPCTypeCheckArgument(const UniValue &value,
+                          const UniValueType &typeExpected);
 
 /**
  * Check for expected keys/value types in an Object.
@@ -148,7 +146,7 @@ public:
      * but only GUI RPC console, and to break the dependency of pcserver on
      * httprpc.
      */
-    virtual RPCTimerBase *NewTimer(std::function<void(void)> &func,
+    virtual RPCTimerBase *NewTimer(std::function<void()> &func,
                                    int64_t millis) = 0;
 };
 
@@ -171,7 +169,7 @@ void RPCUnsetTimerInterface(RPCTimerInterface *iface);
  * Run func nSeconds from now.
  * Overrides previous timer <name> (if any).
  */
-void RPCRunLater(const std::string &name, std::function<void(void)> func,
+void RPCRunLater(const std::string &name, std::function<void()> func,
                  int64_t nSeconds);
 
 typedef UniValue (*rpcfn_type)(Config &config,
@@ -249,9 +247,18 @@ public:
 
     /**
      * Appends a ContextFreeRPCCommand to the dispatch table.
+     *
      * Returns false if RPC server is already running (dump concurrency
      * protection).
+     *
      * Commands cannot be overwritten (returns false).
+     *
+     * Commands with different method names but the same callback function will
+     * be considered aliases, and only the first registered method name will
+     * show up in the help text command listing. Aliased commands do not have
+     * to have the same behavior. Server and client code can distinguish
+     * between calls based on method name, and aliased commands can also
+     * register different names, types, and numbers of parameters.
      */
     bool appendCommand(const std::string &name,
                        const ContextFreeRPCCommand *pcmd);
@@ -270,18 +277,16 @@ extern std::vector<uint8_t> ParseHexV(const UniValue &v, std::string strName);
 extern std::vector<uint8_t> ParseHexO(const UniValue &o, std::string strKey);
 
 extern Amount AmountFromValue(const UniValue &value);
-extern UniValue ValueFromAmount(const Amount amount);
 extern std::string HelpExampleCli(const std::string &methodname,
                                   const std::string &args);
 extern std::string HelpExampleRpc(const std::string &methodname,
                                   const std::string &args);
 
-bool StartRPC();
+void StartRPC();
 void InterruptRPC();
 void StopRPC();
 std::string JSONRPCExecBatch(Config &config, RPCServer &rpcServer,
                              const JSONRPCRequest &req, const UniValue &vReq);
-void RPCNotifyBlockChange(bool ibd, const CBlockIndex *);
 
 /**
  * Retrieves any serialization flags requested in command line argument

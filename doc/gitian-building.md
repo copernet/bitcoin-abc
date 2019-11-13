@@ -66,6 +66,7 @@ make-clean-vm --suite xenial --arch amd64
 on-target ls -la
 ```
 
+Alternatively, you can skip the macOS build by adding `--os=lw` below.
 
 
 Building Wormhole
@@ -97,7 +98,7 @@ mv MacOSX10.11.sdk.tar.gz inputs
 
 Build binaries
 --------------
-Windows and OSX have code signed binaries, but those won't be available until a few developers have gitian signed the non-codesigned binaries.
+Windows and macOS have code signed binaries, but those won't be available until a few developers have gitian signed the non-codesigned binaries.
 
 To build the most recent tag:
 

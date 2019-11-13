@@ -2,7 +2,7 @@
 # Copyright (c) 2017 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
+"""Test the listsincelast RPC."""
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_array_result, assert_raises_rpc_error
 
@@ -11,7 +11,9 @@ class ListSinceBlockTest (BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
         self.setup_clean_chain = True
-        self.extra_args = [["-noparkdeepreorg"], ["-noparkdeepreorg"], [], []]
+        self.extra_args = [["-noparkdeepreorg", '-deprecatedrpc=accounts'],
+                           ["-noparkdeepreorg", '-deprecatedrpc=accounts'],
+                           ['-deprecatedrpc=accounts'], ['-deprecatedrpc=accounts']]
 
     def run_test(self):
         self.nodes[2].generate(101)
@@ -215,7 +217,7 @@ class ListSinceBlockTest (BitcoinTestFramework):
         1. tx1 is listed in listsinceblock.
         2. It is included in 'removed' as it was removed, even though it is now
            present in a different block.
-        3. It is listed with a confirmations count of 2 (bb3, bb4), not
+        3. It is listed with a confirmation count of 2 (bb3, bb4), not
            3 (aa1, aa2, aa3).
         '''
 

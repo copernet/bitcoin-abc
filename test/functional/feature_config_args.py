@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-# Copyright (c) 2017 The Bitcoin Core developers
+# Copyright (c) 2017-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test various command line arguments and configuration file parameters."""
 import os
-import time
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import get_datadir_path
 
 
 class ConfArgsTest(BitcoinTestFramework):
@@ -20,15 +18,14 @@ class ConfArgsTest(BitcoinTestFramework):
         # Remove the -datadir argument so it doesn't override the config file
         self.nodes[0].remove_default_args(["-datadir"])
 
-        default_data_dir = get_datadir_path(self.options.tmpdir, 0)
+        default_data_dir = self.nodes[0].datadir
         new_data_dir = os.path.join(default_data_dir, 'newdatadir')
         new_data_dir_2 = os.path.join(default_data_dir, 'newdatadir2')
 
         # Check that using -datadir argument on non-existent directory fails
         self.nodes[0].datadir = new_data_dir
-        self.assert_start_raises_init_error(
-            0, ['-datadir='+new_data_dir],
-            'Error: Specified data directory "' + new_data_dir + '" does not exist.')
+        self.nodes[0].assert_start_raises_init_error(
+            ['-datadir=' + new_data_dir], 'Error: Specified data directory "' + new_data_dir + '" does not exist.')
 
         # Check that using non-existent datadir in conf file fails
         conf_file = os.path.join(default_data_dir, "bitcoin.conf")
@@ -39,16 +36,14 @@ class ConfArgsTest(BitcoinTestFramework):
             f.write("datadir=" + new_data_dir + "\n")
             f.write(conf_file_contents)
 
-        self.assert_start_raises_init_error(
-            0, ['-conf='+conf_file],
-            'Error reading configuration file: specified data directory "' + new_data_dir + '" does not exist.')
+        self.nodes[0].assert_start_raises_init_error(
+            ['-conf=' + conf_file], 'Error reading configuration file: specified data directory "' + new_data_dir + '" does not exist.')
 
         # Create the directory and ensure the config file now works
         os.mkdir(new_data_dir)
         self.start_node(0, ['-conf='+conf_file, '-wallet=w1'])
-        time.sleep(5)
         self.stop_node(0)
-        assert os.path.isfile(os.path.join(
+        assert os.path.exists(os.path.join(
             new_data_dir, 'regtest', 'wallets', 'w1'))
 
         # Ensure command line argument overrides datadir in conf
@@ -56,7 +51,7 @@ class ConfArgsTest(BitcoinTestFramework):
         self.nodes[0].datadir = new_data_dir_2
         self.start_node(0, ['-datadir='+new_data_dir_2,
                             '-conf='+conf_file, '-wallet=w2'])
-        assert os.path.isfile(os.path.join(
+        assert os.path.exists(os.path.join(
             new_data_dir_2, 'regtest', 'wallets', 'w2'))
 
 

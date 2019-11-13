@@ -17,9 +17,10 @@ BOOST_FIXTURE_TEST_SUITE(blockcheck_tests, BasicTestingSetup)
 static void RunCheckOnBlockImpl(const GlobalConfig &config, const CBlock &block,
                                 CValidationState &state, bool expected) {
     block.fChecked = false;
-    BlockValidationOptions validationOptions =
-        BlockValidationOptions(false, false);
-    bool fValid = CheckBlock(config, block, state, validationOptions);
+    bool fValid = CheckBlock(
+        block, state, config.GetChainParams().GetConsensus(),
+        BlockValidationOptions(config).withCheckPoW(false).withCheckMerkleRoot(
+            false));
 
     BOOST_CHECK_EQUAL(fValid, expected);
     BOOST_CHECK_EQUAL(fValid, state.IsValid());
@@ -37,6 +38,10 @@ static void RunCheckOnBlock(const GlobalConfig &config, const CBlock &block,
 
     BOOST_CHECK_EQUAL(state.GetRejectCode(), REJECT_INVALID);
     BOOST_CHECK_EQUAL(state.GetRejectReason(), reason);
+}
+
+static COutPoint InsecureRandOutPoint() {
+    return COutPoint(TxId(InsecureRand256()), 0);
 }
 
 BOOST_AUTO_TEST_CASE(blockfail) {
@@ -63,7 +68,7 @@ BOOST_AUTO_TEST_CASE(blockfail) {
     RunCheckOnBlock(config, block);
 
     // No coinbase
-    tx.vin[0].prevout = COutPoint(InsecureRand256(), 0);
+    tx.vin[0].prevout = InsecureRandOutPoint();
     block.vtx[0] = MakeTransactionRef(tx);
 
     RunCheckOnBlock(config, block, "bad-cb-missing");
@@ -82,7 +87,7 @@ BOOST_AUTO_TEST_CASE(blockfail) {
     auto maxTxCount = ((DEFAULT_MAX_BLOCK_SIZE - 1) / txSize) - 1;
 
     for (size_t i = 1; i < maxTxCount; i++) {
-        tx.vin[0].prevout = COutPoint(InsecureRand256(), 0);
+        tx.vin[0].prevout = InsecureRandOutPoint();
         block.vtx.push_back(MakeTransactionRef(tx));
     }
 
@@ -91,7 +96,7 @@ BOOST_AUTO_TEST_CASE(blockfail) {
 
     // But reject it with one more transaction as it goes over the maximum
     // allowed block size.
-    tx.vin[0].prevout = COutPoint(InsecureRand256(), 0);
+    tx.vin[0].prevout = InsecureRandOutPoint();
     block.vtx.push_back(MakeTransactionRef(tx));
     RunCheckOnBlock(config, block, "bad-blk-length");
 }

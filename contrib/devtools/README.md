@@ -2,12 +2,6 @@ Contents
 ========
 This directory contains tools for developers working on this repository.
 
-check-doc.py
-============
-
-Check if all command line args are documented. The return value indicates the
-number of undocumented args.
-
 copyright\_header.py
 ====================
 
@@ -81,23 +75,6 @@ example:
 BUILDDIR=$PWD/build contrib/devtools/gen-manpages.sh
 ```
 
-git-subtree-check.sh
-====================
-
-Run this script from the root of the repository to verify that a subtree matches the contents of
-the commit it claims to have been updated to.
-
-To use, make sure that you have fetched the upstream repository branch in which the subtree is
-maintained:
-* for `src/secp256k1`: https://github.com/bitcoin-core/secp256k1.git (branch master)
-* for `src/leveldb`: https://github.com/bitcoin-core/leveldb.git (branch bitcoin-fork)
-* for `src/univalue`: https://github.com/bitcoin-core/univalue.git (branch master)
-* for `src/crypto/ctaes`: https://github.com/bitcoin-core/ctaes.git (branch master)
-
-Usage: `git-subtree-check.sh DIR (COMMIT)`
-
-`COMMIT` may be omitted, in which case `HEAD` is used.
-
 optimize-pngs.py
 ================
 
@@ -118,7 +95,7 @@ still compatible with the minimum supported Linux distribution versions.
 
 Example usage after a gitian build:
 
-    find ../gitian-builder/build -type f -executable | xargs python contrib/devtools/symbol-check.py 
+    find ../gitian-builder/build -type f -executable | xargs python3 contrib/devtools/symbol-check.py
 
 If only supported symbols are used the return value will be 0 and the output will be empty.
 
@@ -135,8 +112,19 @@ update-translations.py
 Run this script from the root of the repository to update all translations from transifex.
 It will do the following automatically:
 
-- fetch all translations
-- post-process them into valid and committable format
-- add missing translations to the build system (TODO)
+- Fetch all translations
+- Post-process them into valid and committable format
+- Add missing translations to the build system (TODO)
 
 See doc/translation-process.md for more information.
+
+circular-dependencies.py
+========================
+
+Run this script from the root of the source tree (`src/`) to find circular dependencies in the source code.
+This looks only at which files include other files, treating the `.cpp` and `.h` file as one unit.
+
+Example usage:
+
+    cd <project root>/src
+    ../contrib/devtools/circular-dependencies.py {*,*/*,*/*/*}.{h,cpp}

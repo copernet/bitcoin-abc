@@ -4,6 +4,8 @@
 
 #include <test/test_bitcoin.h>
 
+#include <banman.h>
+#include <chain.h>
 #include <chainparams.h>
 #include <config.h>
 #include <consensus/consensus.h>
@@ -14,6 +16,8 @@
 #include <logging.h>
 #include <miner.h>
 #include <net_processing.h>
+#include <noui.h>
+#include <pow.h>
 #include <pubkey.h>
 #include <random.h>
 #include <rpc/register.h>
@@ -25,33 +29,22 @@
 #include <ui_interface.h>
 #include <validation.h>
 
-#include <atomic>
-#include <chrono>
-#include <condition_variable>
-#include <cstdio>
-#include <functional>
-#include <list>
 #include <memory>
-#include <thread>
 
-void CConnmanTest::AddNode(CNode &node) {
-    LOCK(g_connman->cs_vNodes);
-    g_connman->vNodes.push_back(&node);
+const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
+
+FastRandomContext g_insecure_rand_ctx;
+
+std::ostream &operator<<(std::ostream &os, const uint256 &num) {
+    os << num.ToString();
+    return os;
 }
 
-void CConnmanTest::ClearNodes() {
-    LOCK(g_connman->cs_vNodes);
-    g_connman->vNodes.clear();
-}
-
-uint256 insecure_rand_seed = GetRandHash();
-FastRandomContext insecure_rand_ctx(insecure_rand_seed);
-
-extern void noui_connect();
-
-BasicTestingSetup::BasicTestingSetup(const std::string &chainName) {
+BasicTestingSetup::BasicTestingSetup(const std::string &chainName)
+    : m_path_root(fs::temp_directory_path() / "test_bitcoin" /
+                  strprintf("%lu_%i", static_cast<unsigned long>(GetTime()),
+                            int(InsecureRandRange(1 << 30)))) {
     SHA256AutoDetect();
-    RandomInit();
     ECC_Start();
     SetupEnvironment();
     SetupNetworking();
@@ -64,18 +57,23 @@ BasicTestingSetup::BasicTestingSetup(const std::string &chainName) {
     fCheckBlockIndex = true;
     SelectParams(chainName);
     noui_connect();
-
-    // Set config parameters to default.
-    GlobalConfig config;
-    config.SetMaxBlockSize(DEFAULT_MAX_BLOCK_SIZE);
 }
 
 BasicTestingSetup::~BasicTestingSetup() {
+    fs::remove_all(m_path_root);
     ECC_Stop();
+}
+
+fs::path BasicTestingSetup::SetDataDir(const std::string &name) {
+    fs::path ret = m_path_root / name;
+    fs::create_directories(ret);
+    gArgs.ForceSetArg("-datadir", ret.string());
+    return ret;
 }
 
 TestingSetup::TestingSetup(const std::string &chainName)
     : BasicTestingSetup(chainName) {
+    SetDataDir("tempdir");
     const Config &config = GetConfig();
     const CChainParams &chainparams = config.GetChainParams();
 
@@ -95,16 +93,10 @@ TestingSetup::TestingSetup(const std::string &chainName)
     }
 
     ClearDatadirCache();
-    pathTemp = fs::temp_directory_path() /
-               strprintf("test_bitcoin_%lu_%i", (unsigned long)GetTime(),
-                         (int)(InsecureRandRange(100000)));
-    fs::create_directories(pathTemp);
-    gArgs.ForceSetArg("-datadir", pathTemp.string());
 
     // We have to run a scheduler thread to prevent ActivateBestChain
     // from blocking due to queue overrun.
-    threadGroup.create_thread(
-        boost::bind(&CScheduler::serviceQueue, &scheduler));
+    threadGroup.create_thread(std::bind(&CScheduler::serviceQueue, &scheduler));
     GetMainSignals().RegisterBackgroundSignalScheduler(scheduler);
 
     g_mempool.setSanityCheck(1.0);
@@ -112,12 +104,13 @@ TestingSetup::TestingSetup(const std::string &chainName)
     pcoinsdbview.reset(new CCoinsViewDB(1 << 23, true));
     pcoinsTip.reset(new CCoinsViewCache(pcoinsdbview.get()));
     if (!LoadGenesisBlock(chainparams)) {
-        throw std::runtime_error("InitBlockIndex failed.");
+        throw std::runtime_error("LoadGenesisBlock failed.");
     }
     {
         CValidationState state;
         if (!ActivateBestChain(config, state)) {
-            throw std::runtime_error("ActivateBestChain failed.");
+            throw std::runtime_error(strprintf("ActivateBestChain failed. (%s)",
+                                               FormatStateMessage(state)));
         }
     }
     nScriptCheckThreads = 3;
@@ -125,10 +118,11 @@ TestingSetup::TestingSetup(const std::string &chainName)
         threadGroup.create_thread(&ThreadScriptCheck);
     }
 
+    g_banman =
+        std::make_unique<BanMan>(GetDataDir() / "banlist.dat", chainparams,
+                                 nullptr, DEFAULT_MISBEHAVING_BANTIME);
     // Deterministic randomness for tests.
-    g_connman = std::unique_ptr<CConnman>(new CConnman(config, 0x1337, 0x1337));
-    connman = g_connman.get();
-    peerLogic.reset(new PeerLogicValidation(connman, scheduler));
+    g_connman = std::make_unique<CConnman>(config, 0x1337, 0x1337);
 }
 
 TestingSetup::~TestingSetup() {
@@ -137,12 +131,11 @@ TestingSetup::~TestingSetup() {
     GetMainSignals().FlushBackgroundCallbacks();
     GetMainSignals().UnregisterBackgroundSignalScheduler();
     g_connman.reset();
-    peerLogic.reset();
+    g_banman.reset();
     UnloadBlockIndex();
     pcoinsTip.reset();
     pcoinsdbview.reset();
     pblocktree.reset();
-    fs::remove_all(pathTemp);
 }
 
 TestChain100Setup::TestChain100Setup()
@@ -154,7 +147,7 @@ TestChain100Setup::TestChain100Setup()
     for (int i = 0; i < COINBASE_MATURITY; i++) {
         std::vector<CMutableTransaction> noTxns;
         CBlock b = CreateAndProcessBlock(noTxns, scriptPubKey);
-        coinbaseTxns.push_back(*b.vtx[0]);
+        m_coinbase_txns.push_back(b.vtx[0]);
     }
 }
 
@@ -183,19 +176,21 @@ CBlock TestChain100Setup::CreateAndProcessBlock(
               });
 
     // IncrementExtraNonce creates a valid coinbase and merkleRoot
-    unsigned int extraNonce = 0;
     {
         LOCK(cs_main);
-        IncrementExtraNonce(config, &block, chainActive.Tip(), extraNonce);
+        unsigned int extraNonce = 0;
+        IncrementExtraNonce(&block, chainActive.Tip(), config.GetMaxBlockSize(),
+                            extraNonce);
     }
 
-    while (!CheckProofOfWork(block.GetHash(), block.nBits, config)) {
+    const Consensus::Params &params = config.GetChainParams().GetConsensus();
+    while (!CheckProofOfWork(block.GetHash(), block.nBits, params)) {
         ++block.nNonce;
     }
 
     std::shared_ptr<const CBlock> shared_pblock =
         std::make_shared<const CBlock>(block);
-    ProcessNewBlock(GetConfig(), shared_pblock, true, nullptr);
+    ProcessNewBlock(config, shared_pblock, true, nullptr);
 
     CBlock result = block;
     return result;
@@ -205,86 +200,16 @@ TestChain100Setup::~TestChain100Setup() {}
 
 CTxMemPoolEntry TestMemPoolEntryHelper::FromTx(const CMutableTransaction &tx,
                                                CTxMemPool *pool) {
-    CTransaction txn(tx);
-    return FromTx(txn, pool);
+    return FromTx(MakeTransactionRef(tx), pool);
 }
 
-CTxMemPoolEntry TestMemPoolEntryHelper::FromTx(const CTransaction &txn,
+CTxMemPoolEntry TestMemPoolEntryHelper::FromTx(const CTransactionRef &tx,
                                                CTxMemPool *pool) {
     // Hack to assume either it's completely dependent on other mempool txs or
     // not at all.
     Amount inChainValue =
-        pool && pool->HasNoInputsOf(txn) ? txn.GetValueOut() : Amount::zero();
+        pool && pool->HasNoInputsOf(*tx) ? tx->GetValueOut() : Amount::zero();
 
-    return CTxMemPoolEntry(MakeTransactionRef(txn), nFee, nTime, dPriority,
-                           nHeight, inChainValue, spendsCoinbase, sigOpCost,
-                           lp);
+    return CTxMemPoolEntry(tx, nFee, nTime, dPriority, nHeight, inChainValue,
+                           spendsCoinbase, sigOpCost, lp);
 }
-
-namespace {
-// A place to put misc. setup code eg "the travis workaround" that needs to run
-// at program startup and exit
-struct Init {
-    Init();
-    ~Init();
-
-    std::list<std::function<void(void)>> cleanup;
-};
-
-Init init;
-
-Init::Init() {
-    if (getenv("TRAVIS_NOHANG_WORKAROUND")) {
-        // This is a workaround for MinGW/Win32 builds on Travis sometimes
-        // hanging due to no output received by Travis after a 10-minute
-        // timeout.
-        // The strategy here is to let the jobs finish however long they take
-        // on Travis, by feeding Travis output.  We start a parallel thread
-        // that just prints out '.' once per second.
-        struct Private {
-            Private() : stop(false) {}
-            std::atomic_bool stop;
-            std::thread thr;
-            std::condition_variable cond;
-            std::mutex mut;
-        } *p = new Private;
-
-        p->thr = std::thread([p] {
-            // thread func.. print dots
-            std::unique_lock<std::mutex> lock(p->mut);
-            unsigned ctr = 0;
-            while (!p->stop) {
-                if (ctr) {
-                    // skip first period to allow app to print first
-                    std::cerr << "." << std::flush;
-                }
-                if (!(++ctr % 79)) {
-                    // newline once in a while to keep travis happy
-                    std::cerr << std::endl;
-                }
-                p->cond.wait_for(lock, std::chrono::milliseconds(1000));
-            }
-        });
-
-        cleanup.emplace_back([p]() {
-            // cleanup function to kill the thread and delete the struct
-            p->mut.lock();
-            p->stop = true;
-            p->cond.notify_all();
-            p->mut.unlock();
-            if (p->thr.joinable()) {
-                p->thr.join();
-            }
-            delete p;
-        });
-    }
-}
-
-Init::~Init() {
-    for (auto &f : cleanup) {
-        if (f) {
-            f();
-        }
-    }
-}
-} // end anonymous namespace

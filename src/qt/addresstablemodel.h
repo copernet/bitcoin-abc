@@ -8,6 +8,8 @@
 #include <QAbstractTableModel>
 #include <QStringList>
 
+enum class OutputType;
+
 class AddressTablePriv;
 class WalletModel;
 
@@ -79,12 +81,19 @@ public:
        Returns the added address on success, and an empty string otherwise.
      */
     QString addRow(const QString &type, const QString &label,
-                   const QString &address);
+                   const QString &address, const OutputType address_type);
 
-    /* Look up label for address in address book, if not found return empty
+    /**
+     * Look up label for address in address book, if not found return empty
      * string.
      */
     QString labelForAddress(const QString &address) const;
+
+    /**
+     * Look up purpose for address in address book, if not found return empty
+     * string.
+     */
+    QString purposeForAddress(const QString &address) const;
 
     /* Look up row index of an address in the model.
        Return -1 if not found.
@@ -93,11 +102,17 @@ public:
 
     EditStatus getEditStatus() const { return editStatus; }
 
+    OutputType GetDefaultAddressType() const;
+
 private:
-    WalletModel *walletModel;
-    AddressTablePriv *priv;
+    WalletModel *const walletModel;
+    AddressTablePriv *priv = nullptr;
     QStringList columns;
-    EditStatus editStatus;
+    EditStatus editStatus = OK;
+
+    /** Look up address book data given an address string. */
+    bool getAddressData(const QString &address, std::string *name,
+                        std::string *purpose) const;
 
     /** Notify listeners that data changed. */
     void emitDataChanged(int index);

@@ -23,8 +23,8 @@
 #include <script/standard.h>
 #include <timedata.h>
 #include <txmempool.h>
-#include <util.h>
-#include <utilmoneystr.h>
+#include <util/moneystr.h>
+#include <util/system.h>
 #include <validation.h>
 #include <validationinterface.h>
 
@@ -32,12 +32,6 @@
 #include <queue>
 #include <utility>
 
-//////////////////////////////////////////////////////////////////////////////
-//
-// BitcoinMiner
-//
-
-//
 // Unconfirmed transactions in the memory pool often depend on other
 // transactions in the memory pool. When we select transactions from the
 // pool, we select by highest priority or fee rate, so we might consider
@@ -46,7 +40,7 @@
 uint64_t nLastBlockTx = 0;
 uint64_t nLastBlockSize = 0;
 
-int64_t UpdateTime(CBlockHeader *pblock, const Config &config,
+int64_t UpdateTime(CBlockHeader *pblock, const Consensus::Params &params,
                    const CBlockIndex *pindexPrev) {
     int64_t nOldTime = pblock->nTime;
     int64_t nNewTime =
@@ -56,52 +50,61 @@ int64_t UpdateTime(CBlockHeader *pblock, const Config &config,
         pblock->nTime = nNewTime;
     }
 
-    const Consensus::Params &consensusParams =
-        config.GetChainParams().GetConsensus();
-
     // Updating time can change work required on testnet:
-    if (consensusParams.fPowAllowMinDifficultyBlocks) {
-        pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, config);
+    if (params.fPowAllowMinDifficultyBlocks) {
+        pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, params);
     }
 
     return nNewTime - nOldTime;
 }
 
-static uint64_t ComputeMaxGeneratedBlockSize(const Config &config,
-                                             const CBlockIndex *pindexPrev) {
+BlockAssembler::Options::Options()
+    : nExcessiveBlockSize(DEFAULT_MAX_BLOCK_SIZE),
+      nMaxGeneratedBlockSize(DEFAULT_MAX_GENERATED_BLOCK_SIZE),
+      blockMinFeeRate(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB),
+      nBlockPriorityPercentage(DEFAULT_BLOCK_PRIORITY_PERCENTAGE) {}
+
+BlockAssembler::BlockAssembler(const CChainParams &params,
+                               const CTxMemPool &_mempool,
+                               const Options &options)
+    : chainparams(params), mempool(&_mempool) {
+    blockMinFeeRate = options.blockMinFeeRate;
+    // Limit size to between 1K and options.nExcessiveBlockSize -1K for sanity:
+    nMaxGeneratedBlockSize = std::max<uint64_t>(
+        1000, std::min<uint64_t>(options.nExcessiveBlockSize - 1000,
+                                 options.nMaxGeneratedBlockSize));
+    // Reserve a portion of the block for high priority transactions.
+    nBlockPriorityPercentage = options.nBlockPriorityPercentage;
+}
+
+static BlockAssembler::Options DefaultOptions(const Config &config) {
     // Block resource limits
     // If -blockmaxsize is not given, limit to DEFAULT_MAX_GENERATED_BLOCK_SIZE
     // If only one is given, only restrict the specified resource.
     // If both are given, restrict both.
-    uint64_t nMaxGeneratedBlockSize = DEFAULT_MAX_GENERATED_BLOCK_SIZE;
+    BlockAssembler::Options options;
+
+    options.nExcessiveBlockSize = config.GetMaxBlockSize();
+
     if (gArgs.IsArgSet("-blockmaxsize")) {
-        nMaxGeneratedBlockSize =
+        options.nMaxGeneratedBlockSize =
             gArgs.GetArg("-blockmaxsize", DEFAULT_MAX_GENERATED_BLOCK_SIZE);
     }
-
-    // Limit size to between 1K and MaxBlockSize-1K for sanity:
-    nMaxGeneratedBlockSize =
-        std::max(uint64_t(1000), std::min(config.GetMaxBlockSize() - 1000,
-                                          nMaxGeneratedBlockSize));
-
-    return nMaxGeneratedBlockSize;
-}
-
-BlockAssembler::BlockAssembler(const Config &_config, const CTxMemPool &mpool)
-    : config(&_config), mempool(&mpool) {
 
     if (gArgs.IsArgSet("-blockmintxfee")) {
         Amount n = Amount::zero();
         ParseMoney(gArgs.GetArg("-blockmintxfee", ""), n);
-        blockMinFeeRate = CFeeRate(n);
-    } else {
-        blockMinFeeRate = CFeeRate(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB);
+        options.blockMinFeeRate = CFeeRate(n);
     }
 
-    LOCK(cs_main);
-    nMaxGeneratedBlockSize =
-        ComputeMaxGeneratedBlockSize(*config, chainActive.Tip());
+    options.nBlockPriorityPercentage = config.GetBlockPriorityPercentage();
+
+    return options;
 }
+
+BlockAssembler::BlockAssembler(const Config &config, const CTxMemPool &_mempool)
+    : BlockAssembler(config.GetChainParams(), _mempool,
+                     DefaultOptions(config)) {}
 
 void BlockAssembler::resetBlock() {
     inBlock.clear();
@@ -115,14 +118,6 @@ void BlockAssembler::resetBlock() {
     nFees = Amount::zero();
 
     lastFewTxs = 0;
-}
-
-static const std::vector<uint8_t>
-getExcessiveBlockSizeSig(const Config &config) {
-    std::string cbmsg = "/EB" + getSubVersionEB(config.GetMaxBlockSize()) + "/";
-    const char *cbcstr = cbmsg.c_str();
-    std::vector<uint8_t> vec(cbcstr, cbcstr + cbmsg.size());
-    return vec;
 }
 
 std::unique_ptr<CBlockTemplate>
@@ -140,13 +135,13 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     pblock = &pblocktemplate->block;
 
     // Add dummy coinbase tx as first transaction.  It is updated at the end.
-    pblocktemplate->entries.emplace_back(CTransactionRef(), -SATOSHI, -1);
+    pblocktemplate->entries.emplace_back(CTransactionRef(), -SATOSHI, 0, -1);
 
     LOCK2(cs_main, mempool->cs);
     CBlockIndex *pindexPrev = chainActive.Tip();
+    assert(pindexPrev != nullptr);
     nHeight = pindexPrev->nHeight + 1;
 
-    const CChainParams &chainparams = config->GetChainParams();
     pblock->nVersion =
         ComputeBlockVersion(pindexPrev, chainparams.GetConsensus());
     // -regtest only: allow overriding block.nVersion with
@@ -156,8 +151,6 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     }
 
     pblock->nTime = GetAdjustedTime();
-    nMaxGeneratedBlockSize = ComputeMaxGeneratedBlockSize(*config, pindexPrev);
-
     nMedianTimePast = pindexPrev->GetMedianTimePast();
     nLockTimeCutoff =
         (STANDARD_LOCKTIME_VERIFY_FLAGS & LOCKTIME_MEDIAN_TIME_PAST)
@@ -169,7 +162,7 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     int nDescendantsUpdated = 0;
     addPackageTxs(nPackagesSelected, nDescendantsUpdated);
 
-    if (IsMagneticAnomalyEnabled(*config, pindexPrev)) {
+    if (IsMagneticAnomalyEnabled(chainparams.GetConsensus(), pindexPrev)) {
         // If magnetic anomaly is enabled, we make sure transaction are
         // canonically ordered.
         // FIXME: Use a zipped list. See T479
@@ -203,7 +196,11 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     }
 
     pblocktemplate->entries[0].tx = MakeTransactionRef(coinbaseTx);
-    pblocktemplate->entries[0].fees = -1 * nFees;
+    // Note: For the Coinbase, the template entry fields aside from the `tx` are
+    // not used anywhere at the time of writing.  The mining rpc throws out the
+    // entire transaction in fact. The tx itself is only used during regtest
+    // mode.
+    pblocktemplate->entries[0].txFee = -1 * nFees;
 
     uint64_t nSerializeSize =
         GetSerializeSize(*pblock, SER_NETWORK, PROTOCOL_VERSION);
@@ -213,11 +210,12 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
 
     // Fill in header.
     pblock->hashPrevBlock = pindexPrev->GetBlockHash();
-    UpdateTime(pblock, *config, pindexPrev);
-    pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, *config);
+    UpdateTime(pblock, chainparams.GetConsensus(), pindexPrev);
+    pblock->nBits =
+        GetNextWorkRequired(pindexPrev, pblock, chainparams.GetConsensus());
     pblock->nNonce = 0;
-    pblocktemplate->entries[0].sigOpCount = GetSigOpCountWithoutP2SH(
-        *pblocktemplate->entries[0].tx, STANDARD_CHECKDATASIG_VERIFY_FLAGS);
+    pblocktemplate->entries[0].txSigOps = GetSigOpCountWithoutP2SH(
+        *pblocktemplate->entries[0].tx, STANDARD_SCRIPT_VERIFY_FLAGS);
 
     // Copy all the transactions into the block
     // FIXME: This should be removed as it is significant overhead.
@@ -227,9 +225,10 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     }
 
     CValidationState state;
-    BlockValidationOptions validationOptions(false, false);
-    if (!TestBlockValidity(*config, state, *pblock, pindexPrev,
-                           validationOptions)) {
+    if (!TestBlockValidity(state, chainparams, *pblock, pindexPrev,
+                           BlockValidationOptions(nMaxGeneratedBlockSize)
+                               .withCheckPoW(false)
+                               .withCheckMerkleRoot(false))) {
         throw std::runtime_error(strprintf("%s: TestBlockValidity failed: %s",
                                            __func__,
                                            FormatStateMessage(state)));
@@ -290,10 +289,11 @@ bool BlockAssembler::TestPackage(uint64_t packageSize,
 bool BlockAssembler::TestPackageTransactions(
     const CTxMemPool::setEntries &package) {
     uint64_t nPotentialBlockSize = nBlockSize;
-    for (const CTxMemPool::txiter it : package) {
+    for (CTxMemPool::txiter it : package) {
         CValidationState state;
-        if (!ContextualCheckTransaction(*config, it->GetTx(), state, nHeight,
-                                        nLockTimeCutoff, nMedianTimePast)) {
+        if (!ContextualCheckTransaction(chainparams.GetConsensus(), it->GetTx(),
+                                        state, nHeight, nLockTimeCutoff,
+                                        nMedianTimePast)) {
             return false;
         }
 
@@ -344,8 +344,9 @@ BlockAssembler::TestForBlock(CTxMemPool::txiter it) {
     // Must check that lock times are still valid. This can be removed once MTP
     // is always enforced as long as reorgs keep the mempool consistent.
     CValidationState state;
-    if (!ContextualCheckTransaction(*config, it->GetTx(), state, nHeight,
-                                    nLockTimeCutoff, nMedianTimePast)) {
+    if (!ContextualCheckTransaction(chainparams.GetConsensus(), it->GetTx(),
+                                    state, nHeight, nLockTimeCutoff,
+                                    nMedianTimePast)) {
         return TestForBlockResult::TXCantFit;
     }
 
@@ -354,6 +355,7 @@ BlockAssembler::TestForBlock(CTxMemPool::txiter it) {
 
 void BlockAssembler::AddToBlock(CTxMemPool::txiter iter) {
     pblocktemplate->entries.emplace_back(iter->GetSharedTx(), iter->GetFee(),
+                                         iter->GetTxSize(),
                                          iter->GetSigOpCount());
     nBlockSize += iter->GetTxSize();
     ++nBlockTx;
@@ -378,7 +380,7 @@ int BlockAssembler::UpdatePackagesForAdded(
     const CTxMemPool::setEntries &alreadyAdded,
     indexed_modified_transaction_set &mapModifiedTx) {
     int nDescendantsUpdated = 0;
-    for (const CTxMemPool::txiter it : alreadyAdded) {
+    for (CTxMemPool::txiter it : alreadyAdded) {
         CTxMemPool::setEntries descendants;
         mempool->CalculateDescendants(it, descendants);
         // Insert all descendants (not yet in block) into the modified set.
@@ -392,7 +394,6 @@ int BlockAssembler::UpdatePackagesForAdded(
             if (mit == mapModifiedTx.end()) {
                 CTxMemPoolModifiedEntry modEntry(desc);
                 modEntry.nSizeWithAncestors -= it->GetTxSize();
-                modEntry.nBillableSizeWithAncestors -= it->GetTxBillableSize();
                 modEntry.nModFeesWithAncestors -= it->GetModifiedFee();
                 modEntry.nSigOpCountWithAncestors -= it->GetSigOpCount();
                 mapModifiedTx.insert(modEntry);
@@ -421,7 +422,7 @@ bool BlockAssembler::SkipMapTxEntry(
 }
 
 void BlockAssembler::SortForBlock(
-    const CTxMemPool::setEntries &package, CTxMemPool::txiter entry,
+    const CTxMemPool::setEntries &package,
     std::vector<CTxMemPool::txiter> &sortedEntries) {
     // Sort package by ancestor count. If a transaction A depends on transaction
     // B, then A's ancestor count must be greater than B's. So this is
@@ -496,7 +497,8 @@ void BlockAssembler::addPackageTxs(int &nPackagesSelected,
             // Try to compare the mapTx entry to the mapModifiedTx entry.
             iter = mempool->mapTx.project<0>(mi);
             if (modit != mapModifiedTx.get<ancestor_score>().end() &&
-                CompareModifiedEntry()(*modit, CTxMemPoolModifiedEntry(iter))) {
+                CompareTxMemPoolEntryByAncestorFee()(
+                    *modit, CTxMemPoolModifiedEntry(iter))) {
                 // The best entry in mapModifiedTx has higher score than the one
                 // from mapTx. Switch which transaction (package) to consider
                 iter = modit->iter;
@@ -570,7 +572,7 @@ void BlockAssembler::addPackageTxs(int &nPackagesSelected,
 
         // Package can be added. Sort the entries in a valid order.
         std::vector<CTxMemPool::txiter> sortedEntries;
-        SortForBlock(ancestors, iter, sortedEntries);
+        SortForBlock(ancestors, sortedEntries);
 
         for (auto &entry : sortedEntries) {
             AddToBlock(entry);
@@ -588,12 +590,12 @@ void BlockAssembler::addPackageTxs(int &nPackagesSelected,
 void BlockAssembler::addPriorityTxs() {
     // How much of the block should be dedicated to high-priority transactions,
     // included regardless of the fees they pay.
-    if (config->GetBlockPriorityPercentage() == 0) {
+    if (nBlockPriorityPercentage == 0) {
         return;
     }
 
     uint64_t nBlockPrioritySize =
-        nMaxGeneratedBlockSize * config->GetBlockPriorityPercentage() / 100;
+        nMaxGeneratedBlockSize * nBlockPriorityPercentage / 100;
 
     // This vector will be sorted into a priority queue:
     std::vector<TxCoinAgePriority> vecPriority;
@@ -679,8 +681,15 @@ void BlockAssembler::addPriorityTxs() {
     }
 }
 
-void IncrementExtraNonce(const Config &config, CBlock *pblock,
-                         const CBlockIndex *pindexPrev,
+static const std::vector<uint8_t>
+getExcessiveBlockSizeSig(uint64_t nExcessiveBlockSize) {
+    std::string cbmsg = "/EB" + getSubVersionEB(nExcessiveBlockSize) + "/";
+    std::vector<uint8_t> vec(cbmsg.begin(), cbmsg.end());
+    return vec;
+}
+
+void IncrementExtraNonce(CBlock *pblock, const CBlockIndex *pindexPrev,
+                         uint64_t nExcessiveBlockSize,
                          unsigned int &nExtraNonce) {
     // Update nExtraNonce
     static uint256 hashPrevBlock;
@@ -695,7 +704,7 @@ void IncrementExtraNonce(const Config &config, CBlock *pblock,
     CMutableTransaction txCoinbase(*pblock->vtx[0]);
     txCoinbase.vin[0].scriptSig =
         (CScript() << nHeight << CScriptNum(nExtraNonce)
-                   << getExcessiveBlockSizeSig(config)) +
+                   << getExcessiveBlockSizeSig(nExcessiveBlockSize)) +
         COINBASE_FLAGS;
 
     // Make sure the coinbase is big enough.

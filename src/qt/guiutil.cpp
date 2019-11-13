@@ -4,13 +4,11 @@
 
 #include <qt/guiutil.h>
 
-#include <base58.h>
-#include <cashaddr.h>
+#include <cashaddrenc.h>
 #include <chainparams.h>
-#include <config.h>
-#include <dstencode.h>
 #include <fs.h>
 #include <interfaces/node.h>
+#include <key_io.h>
 #include <policy/policy.h>
 #include <primitives/transaction.h>
 #include <protocol.h>
@@ -20,8 +18,8 @@
 #include <qt/walletmodel.h>
 #include <script/script.h>
 #include <script/standard.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #ifdef WIN32
 #ifdef _WIN32_WINNT
@@ -41,8 +39,6 @@
 #include <shlwapi.h>
 #endif
 
-#include <boost/filesystem/detail/utf8_codecvt_facet.hpp>
-#include <boost/filesystem/fstream.hpp>
 #include <boost/scoped_array.hpp>
 
 #include <QAbstractItemView>
@@ -65,20 +61,10 @@
 #include <QFontDatabase>
 #endif
 
-static fs::detail::utf8_codecvt_facet utf8;
-
 #if defined(Q_OS_MAC)
 // These Mac includes must be done in the global namespace
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
-
-extern double NSAppKitVersionNumber;
-#if !defined(NSAppKitVersionNumber10_8)
-#define NSAppKitVersionNumber10_8 1187
-#endif
-#if !defined(NSAppKitVersionNumber10_9)
-#define NSAppKitVersionNumber10_9 1265
-#endif
 #endif
 
 namespace GUIUtil {
@@ -102,45 +88,43 @@ QFont fixedPitchFont() {
 #endif
 }
 
-static std::string MakeAddrInvalid(std::string addr, const Config &config) {
+static std::string MakeAddrInvalid(std::string addr,
+                                   const CChainParams &params) {
     if (addr.size() < 2) {
         return "";
     }
 
     // Checksum is at the end of the address. Swapping chars to make it invalid.
     std::swap(addr[addr.size() - 1], addr[addr.size() - 2]);
-    if (!IsValidDestinationString(addr, config.GetChainParams())) {
+    if (!IsValidDestinationString(addr, params)) {
         return addr;
     }
 
     return "";
 }
 
-std::string DummyAddress(const Config &config) {
-    // Just some dummy data to generate an convincing random-looking (but
+std::string DummyAddress(const CChainParams &params) {
+    // Just some dummy data to generate a convincing random-looking (but
     // consistent) address
     static const std::vector<uint8_t> dummydata = {
         0xeb, 0x15, 0x23, 0x1d, 0xfc, 0xeb, 0x60, 0x92, 0x58, 0x86,
         0xb6, 0x7d, 0x06, 0x52, 0x99, 0x92, 0x59, 0x15, 0xae, 0xb1};
 
     const CTxDestination dstKey = CKeyID(uint160(dummydata));
-    return MakeAddrInvalid(EncodeDestination(dstKey, config), config);
+    return MakeAddrInvalid(EncodeCashAddr(dstKey, params), params);
 }
 
 // Addresses are stored in the database with the encoding that the client was
 // configured with at the time of creation.
 //
-// This converts to clients current configuration.
-QString convertToConfiguredAddressFormat(const Config &config,
-                                         const QString &addr) {
-    if (!IsValidDestinationString(addr.toStdString(),
-                                  config.GetChainParams())) {
+// This converts to cashaddr.
+QString convertToCashAddr(const CChainParams &params, const QString &addr) {
+    if (!IsValidDestinationString(addr.toStdString(), params)) {
         // We have something sketchy as input. Do not try to convert.
         return addr;
     }
-    CTxDestination dst =
-        DecodeDestination(addr.toStdString(), config.GetChainParams());
-    return QString::fromStdString(EncodeDestination(dst, config));
+    CTxDestination dst = DecodeDestination(addr.toStdString(), params);
+    return QString::fromStdString(EncodeCashAddr(dst, params));
 }
 
 void setupAddressWidget(QValidatedLineEdit *widget, QWidget *parent) {
@@ -151,36 +135,10 @@ void setupAddressWidget(QValidatedLineEdit *widget, QWidget *parent) {
     // and this is the only place, where this address is supplied.
     widget->setPlaceholderText(
         QObject::tr("Enter a Bitcoin address (e.g. %1)")
-            .arg(QString::fromStdString(DummyAddress(GetConfig()))));
+            .arg(QString::fromStdString(DummyAddress(Params()))));
     widget->setValidator(
         new BitcoinAddressEntryValidator(Params().CashAddrPrefix(), parent));
     widget->setCheckValidator(new BitcoinAddressCheckValidator(parent));
-}
-
-void setupAmountWidget(QLineEdit *widget, QWidget *parent) {
-    QDoubleValidator *amountValidator = new QDoubleValidator(parent);
-    amountValidator->setDecimals(8);
-    amountValidator->setBottom(0.0);
-    widget->setValidator(amountValidator);
-    widget->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-}
-
-QString bitcoinURIScheme(const CChainParams &params, bool useCashAddr) {
-    if (!useCashAddr) {
-        return "bitcoincash";
-    }
-    return QString::fromStdString(params.CashAddrPrefix());
-}
-
-QString bitcoinURIScheme(const Config &config) {
-    return bitcoinURIScheme(config.GetChainParams(),
-                            config.UseCashAddrEncoding());
-}
-
-static bool IsCashAddrEncoded(const QUrl &uri) {
-    const std::string addr = (uri.scheme() + ":" + uri.path()).toStdString();
-    auto decoded = cashaddr::Decode(addr, "");
-    return !decoded.first.empty();
 }
 
 bool parseBitcoinURI(const QString &scheme, const QUrl &uri,
@@ -191,12 +149,8 @@ bool parseBitcoinURI(const QString &scheme, const QUrl &uri,
     }
 
     SendCoinsRecipient rv;
-    if (IsCashAddrEncoded(uri)) {
-        rv.address = uri.scheme() + ":" + uri.path();
-    } else {
-        // strip out uri scheme for base58 encoded addresses
-        rv.address = uri.path();
-    }
+    rv.address = uri.scheme() + ":" + uri.path();
+
     // Trim any following forward slash which may have been added by the OS
     if (rv.address.endsWith("/")) {
         rv.address.truncate(rv.address.length() - 1);
@@ -253,12 +207,8 @@ bool parseBitcoinURI(const QString &scheme, QString uri,
     return parseBitcoinURI(scheme, uriInstance, out);
 }
 
-QString formatBitcoinURI(const Config &config, const SendCoinsRecipient &info) {
-    QString ret = info.address;
-    if (!config.UseCashAddrEncoding()) {
-        // prefix address with uri scheme for base58 encoded addresses.
-        ret = (bitcoinURIScheme(config) + ":%1").arg(ret);
-    }
+QString formatBitcoinURI(const SendCoinsRecipient &info) {
+    QString ret = convertToCashAddr(Params(), info.address);
     int paramCount = 0;
 
     if (info.amount != Amount::zero()) {
@@ -290,7 +240,7 @@ bool isDust(interfaces::Node &node, const QString &address, const Amount amount,
     CTxDestination dest = DecodeDestination(address.toStdString(), chainParams);
     CScript script = GetScriptForDestination(dest);
     CTxOut txOut(amount, script);
-    return txOut.IsDust(node.getDustRelayFee());
+    return IsDust(txOut, node.getDustRelayFee());
 }
 
 QString HtmlEscape(const QString &str, bool fMultiLine) {
@@ -430,46 +380,22 @@ void openDebugLogfile() {
     }
 }
 
-void SubstituteFonts(const QString &language) {
-#if defined(Q_OS_MAC)
-// Background:
-// OSX's default font changed in 10.9 and Qt is unable to find it with its
-// usual fallback methods when building against the 10.7 sdk or lower.
-// The 10.8 SDK added a function to let it find the correct fallback font.
-// If this fallback is not properly loaded, some characters may fail to
-// render correctly.
-//
-// The same thing happened with 10.10. .Helvetica Neue DeskInterface is now
-// default.
-//
-// Solution: If building with the 10.7 SDK or lower and the user's platform
-// is 10.9 or higher at runtime, substitute the correct font. This needs to
-// happen before the QApplication is created.
-#if defined(MAC_OS_X_VERSION_MAX_ALLOWED) &&                                   \
-    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8
-    if (floor(NSAppKitVersionNumber) > NSAppKitVersionNumber10_8) {
-        if (floor(NSAppKitVersionNumber) <= NSAppKitVersionNumber10_9) {
-            /* On a 10.9 - 10.9.x system */
-            QFont::insertSubstitution(".Lucida Grande UI", "Lucida Grande");
-        } else {
-            /* 10.10 or later system */
-            if (language == "zh_CN" || language == "zh_TW" ||
-                language == "zh_HK") {
-                // traditional or simplified Chinese
-                QFont::insertSubstitution(".Helvetica Neue DeskInterface",
-                                          "Heiti SC");
-            } else if (language == "ja") {
-                // Japanesee
-                QFont::insertSubstitution(".Helvetica Neue DeskInterface",
-                                          "Songti SC");
-            } else {
-                QFont::insertSubstitution(".Helvetica Neue DeskInterface",
-                                          "Lucida Grande");
-            }
-        }
+bool openBitcoinConf() {
+    fs::path pathConfig =
+        GetConfigFile(gArgs.GetArg("-conf", BITCOIN_CONF_FILENAME));
+
+    /* Create the file */
+    fs::ofstream configFile(pathConfig, std::ios_base::app);
+
+    if (!configFile.good()) {
+        return false;
     }
-#endif
-#endif
+
+    configFile.close();
+
+    /* Open bitcoin.conf with the associated application */
+    return QDesktopServices::openUrl(
+        QUrl::fromLocalFile(boostPathToQString(pathConfig)));
 }
 
 ToolTipToRichTextFilter::ToolTipToRichTextFilter(int _size_threshold,
@@ -493,22 +419,20 @@ bool ToolTipToRichTextFilter::eventFilter(QObject *obj, QEvent *evt) {
 }
 
 void TableViewLastColumnResizingFixer::connectViewHeadersSignals() {
-    connect(tableView->horizontalHeader(),
-            SIGNAL(sectionResized(int, int, int)), this,
-            SLOT(on_sectionResized(int, int, int)));
-    connect(tableView->horizontalHeader(), SIGNAL(geometriesChanged()), this,
-            SLOT(on_geometriesChanged()));
+    connect(tableView->horizontalHeader(), &QHeaderView::sectionResized, this,
+            &TableViewLastColumnResizingFixer::on_sectionResized);
+    connect(tableView->horizontalHeader(), &QHeaderView::geometriesChanged,
+            this, &TableViewLastColumnResizingFixer::on_geometriesChanged);
 }
 
 // We need to disconnect these while handling the resize events, otherwise we
 // can enter infinite loops.
 void TableViewLastColumnResizingFixer::disconnectViewHeadersSignals() {
-    disconnect(tableView->horizontalHeader(),
-               SIGNAL(sectionResized(int, int, int)), this,
-               SLOT(on_sectionResized(int, int, int)));
-    disconnect(tableView->horizontalHeader(), SIGNAL(geometriesChanged()), this,
-               SLOT(on_geometriesChanged()));
-}
+    disconnect(tableView->horizontalHeader(), &QHeaderView::sectionResized,
+               this, &TableViewLastColumnResizingFixer::on_sectionResized);
+    disconnect(tableView->horizontalHeader(), &QHeaderView::geometriesChanged,
+               this, &TableViewLastColumnResizingFixer::on_geometriesChanged);
+} // namespace GUIUtil
 
 // Setup the resize mode, handles compatibility for Qt5 and below as the method
 // signatures changed.
@@ -748,11 +672,12 @@ bool SetStartOnSystemStartup(bool fAutoStart) {
         fs::remove(GetAutostartFilePath());
     } else {
         char pszExePath[MAX_PATH + 1];
-        memset(pszExePath, 0, sizeof(pszExePath));
-        if (readlink("/proc/self/exe", pszExePath, sizeof(pszExePath) - 1) ==
-            -1) {
+        ssize_t r =
+            readlink("/proc/self/exe", pszExePath, sizeof(pszExePath) - 1);
+        if (r == -1) {
             return false;
         }
+        pszExePath[r] = '\0';
 
         fs::create_directories(GetAutostartDir());
 
@@ -889,11 +814,11 @@ void setClipboard(const QString &str) {
 }
 
 fs::path qstringToBoostPath(const QString &path) {
-    return fs::path(path.toStdString(), utf8);
+    return fs::path(path.toStdString());
 }
 
 QString boostPathToQString(const fs::path &path) {
-    return QString::fromStdString(path.string(utf8));
+    return QString::fromStdString(path.string());
 }
 
 QString formatDurationStr(int secs) {

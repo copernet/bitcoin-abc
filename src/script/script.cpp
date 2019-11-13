@@ -7,7 +7,7 @@
 
 #include <script/script_flags.h>
 #include <tinyformat.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
 
 #include <algorithm>
 
@@ -258,15 +258,40 @@ const char *GetOpName(opcodetype opcode) {
         case OP_INVALIDOPCODE:
             return "OP_INVALIDOPCODE";
 
-            // Note:
-            //  The template matching params OP_SMALLINTEGER/etc are defined in
-            //  opcodetype enum as kind of implementation hack, they are *NOT*
-            //  real opcodes. If found in real Script, just let the default:
-            //  case deal with them.
-
         default:
             return "OP_UNKNOWN";
     }
+}
+
+bool CheckMinimalPush(const std::vector<uint8_t> &data, opcodetype opcode) {
+    // Excludes OP_1NEGATE, OP_1-16 since they are by definition minimal
+    assert(0 <= opcode && opcode <= OP_PUSHDATA4);
+    if (data.size() == 0) {
+        // Should have used OP_0.
+        return opcode == OP_0;
+    }
+    if (data.size() == 1 && data[0] >= 1 && data[0] <= 16) {
+        // Should have used OP_1 .. OP_16.
+        return false;
+    }
+    if (data.size() == 1 && data[0] == 0x81) {
+        // Should have used OP_1NEGATE.
+        return false;
+    }
+    if (data.size() <= 75) {
+        // Must have used a direct push (opcode indicating number of bytes
+        // pushed + those bytes).
+        return opcode == data.size();
+    }
+    if (data.size() <= 255) {
+        // Must have used OP_PUSHDATA.
+        return opcode == OP_PUSHDATA1;
+    }
+    if (data.size() <= 65535) {
+        // Must have used OP_PUSHDATA2.
+        return opcode == OP_PUSHDATA2;
+    }
+    return true;
 }
 
 bool CScriptNum::IsMinimallyEncoded(const std::vector<uint8_t> &vch,
@@ -361,7 +386,7 @@ uint32_t CScript::GetSigOpCount(uint32_t flags, bool fAccurate) const {
 
             case OP_CHECKDATASIG:
             case OP_CHECKDATASIGVERIFY:
-                if (flags & SCRIPT_ENABLE_CHECKDATASIG) {
+                if (flags & SCRIPT_VERIFY_CHECKDATASIG_SIGOPS) {
                     n++;
                 }
                 break;
@@ -482,4 +507,71 @@ bool CScript::IsPushOnly(const_iterator pc) const {
 
 bool CScript::IsPushOnly() const {
     return this->IsPushOnly(begin());
+}
+
+bool GetScriptOp(CScriptBase::const_iterator &pc,
+                 CScriptBase::const_iterator end, opcodetype &opcodeRet,
+                 std::vector<uint8_t> *pvchRet) {
+    opcodeRet = OP_INVALIDOPCODE;
+    if (pvchRet) {
+        pvchRet->clear();
+    }
+    if (pc >= end) {
+        return false;
+    }
+
+    // Read instruction
+    if (end - pc < 1) {
+        return false;
+    }
+
+    uint32_t opcode = *pc++;
+
+    // Immediate operand
+    if (opcode <= OP_PUSHDATA4) {
+        uint32_t nSize = 0;
+        if (opcode < OP_PUSHDATA1) {
+            nSize = opcode;
+        } else if (opcode == OP_PUSHDATA1) {
+            if (end - pc < 1) {
+                return false;
+            }
+            nSize = *pc++;
+        } else if (opcode == OP_PUSHDATA2) {
+            if (end - pc < 2) {
+                return false;
+            }
+            nSize = ReadLE16(&pc[0]);
+            pc += 2;
+        } else if (opcode == OP_PUSHDATA4) {
+            if (end - pc < 4) {
+                return false;
+            }
+            nSize = ReadLE32(&pc[0]);
+            pc += 4;
+        }
+        if (end - pc < 0 || uint32_t(end - pc) < nSize) {
+            return false;
+        }
+        if (pvchRet) {
+            pvchRet->assign(pc, pc + nSize);
+        }
+        pc += nSize;
+    }
+
+    opcodeRet = static_cast<opcodetype>(opcode);
+    return true;
+}
+
+bool CScript::HasValidOps() const {
+    CScript::const_iterator it = begin();
+    while (it < end()) {
+        opcodetype opcode;
+        std::vector<uint8_t> item;
+        if (!GetOp(it, opcode, item) || opcode > MAX_OPCODE ||
+            item.size() > MAX_SCRIPT_ELEMENT_SIZE) {
+            return false;
+        }
+    }
+    return true;
 }

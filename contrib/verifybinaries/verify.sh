@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Copyright (c) 2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -10,8 +10,9 @@
 ###   The script returns 0 if everything passes the checks. It returns 1 if either the
 ###   signature check or the hash check doesn't pass. If an error occurs the return value is 2
 
+export LC_ALL=C
 function clean_up {
-   for file in $*
+   for file in "$@"
    do
       rm "$file" 2> /dev/null
    done
@@ -30,7 +31,7 @@ if [ ! -d "$WORKINGDIR" ]; then
    mkdir "$WORKINGDIR"
 fi
 
-cd "$WORKINGDIR"
+cd "$WORKINGDIR" || exit 1
 
 #test if a version number has been passed as an argument
 if [ -n "$1" ]; then
@@ -50,21 +51,17 @@ if [ -n "$1" ]; then
    else
       BASEDIR="$BASEDIR$VERSION/"
    fi
-
-   SIGNATUREFILE="$BASEDIR$SIGNATUREFILENAME"
 else
    echo "Error: need to specify a version on the command line"
    exit 2
 fi
 
-#first we fetch the file containing the signature
-WGETOUT=$(wget -N "$BASEDIR$SIGNATUREFILENAME" 2>&1)
-
-#and then see if wget completed successfully
-if [ $? -ne 0 ]; then
+if ! WGETOUT=$(wget -N "$HOST1$BASEDIR$SIGNATUREFILENAME" 2>&1); then
    echo "Error: couldn't fetch signature file. Have you specified the version number in the following format?"
-   echo "[$VERSIONPREFIX]<version>-[$RCVERSIONSTRING[0-9]] (example: "$VERSIONPREFIX"0.10.4-"$RCVERSIONSTRING"1)"
+   # shellcheck disable=SC1087
+   echo "[$VERSIONPREFIX]<version>-[$RCVERSIONSTRING[0-9]] (example: ${VERSIONPREFIX}0.10.4-${RCVERSIONSTRING}1)"
    echo "wget output:"
+   # shellcheck disable=SC2001
    echo "$WGETOUT"|sed 's/^/\t/g'
    exit 2
 fi
@@ -87,6 +84,7 @@ if [ $RET -ne 0 ]; then
    fi
 
    echo "gpg output:"
+   # shellcheck disable=SC2001
    echo "$GPGOUT"|sed 's/^/\t/g'
    clean_up $SIGNATUREFILENAME $TMPFILE
    exit "$RET"

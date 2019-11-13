@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Copyright (c) 2018 The Bitcoin Core developers
+# Copyright (c) 2018-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #
@@ -15,10 +15,10 @@ import sys
 
 FALSE_POSITIVES = [
     ("src/dbwrapper.cpp", "vsnprintf(p, limit - p, format, backup_ap)"),
-    ("src/index/base.cpp", "FatalError(const char* fmt, const Args&... args)"),
-    ("src/netbase.cpp", "LogConnectFailure(bool manual_connection, const char* fmt, const Args&... args)"),
-    ("src/util.cpp", "strprintf(_(COPYRIGHT_HOLDERS), _(COPYRIGHT_HOLDERS_SUBSTITUTION))"),
-    ("src/util.cpp", "strprintf(COPYRIGHT_HOLDERS, COPYRIGHT_HOLDERS_SUBSTITUTION)"),
+    ("src/index/base.cpp", "FatalError(const char *fmt, const Args &... args)"),
+    ("src/netbase.cpp", "LogConnectFailure(bool manual_connection, const char *fmt, const Args &... args)"),
+    ("src/util/system.cpp",
+     "strprintf(_(COPYRIGHT_HOLDERS), _(COPYRIGHT_HOLDERS_SUBSTITUTION))"),
     ("src/seeder/main.cpp", "fprintf(stderr, help, argv[0])"),
     ("src/tinyformat.h", "printf(const char *fmt, const Args &... args)"),
     ("src/tinyformat.h", "printf(const char *fmt, TINYFORMAT_VARARGS(n))"),
@@ -56,8 +56,8 @@ def parse_function_calls(function_name, source_code):
     >>> len(parse_function_calls("foo", "#define FOO foo();"))
     0
     """
-    assert(type(function_name) is str and type(
-        source_code) is str and function_name)
+    assert type(function_name) is str and type(
+        source_code) is str and function_name
     lines = [re.sub("// .*", " ", line).strip()
              for line in source_code.split("\n")
              if not line.strip().startswith("#")]
@@ -71,10 +71,10 @@ def normalize(s):
     >>> normalize("  /* nothing */   foo\tfoo  /* bar */  foo     ")
     'foo foo foo'
     """
-    assert(type(s) is str)
+    assert type(s) is str
     s = s.replace("\n", " ")
     s = s.replace("\t", " ")
-    s = re.sub("/\*.*?\*/", " ", s)
+    s = re.sub(r"/\*.*?\*/", " ", s)
     s = re.sub(" {2,}", " ", s)
     return s.strip()
 
@@ -95,7 +95,7 @@ def escape(s):
     >>> escape(r'foo \\t foo \\n foo \\\\ foo \\ foo \\"bar\\"')
     'foo [escaped-tab] foo [escaped-newline] foo \\\\\\\\ foo \\\\ foo [escaped-quote]bar[escaped-quote]'
     """
-    assert(type(s) is str)
+    assert type(s) is str
     for raw_value, escaped_value in ESCAPE_MAP.items():
         s = s.replace(raw_value, escaped_value)
     return s
@@ -110,7 +110,7 @@ def unescape(s):
     >>> unescape("foo [escaped-tab] foo [escaped-newline] foo \\\\\\\\ foo \\\\ foo [escaped-quote]bar[escaped-quote]")
     'foo \\\\t foo \\\\n foo \\\\\\\\ foo \\\\ foo \\\\"bar\\\\"'
     """
-    assert(type(s) is str)
+    assert type(s) is str
     for raw_value, escaped_value in ESCAPE_MAP.items():
         s = s.replace(escaped_value, raw_value)
     return s
@@ -143,11 +143,11 @@ def parse_function_call_and_arguments(function_name, function_call):
     >>> parse_function_call_and_arguments("foo", 'foo("foo")')
     ['foo(', '"foo"', ')']
     """
-    assert(type(function_name) is str and type(
-        function_call) is str and function_name)
+    assert type(function_name) is str and type(
+        function_call) is str and function_name
     remaining = normalize(escape(function_call))
     expected_function_call = "{}(".format(function_name)
-    assert(remaining.startswith(expected_function_call))
+    assert remaining.startswith(expected_function_call)
     parts = [expected_function_call]
     remaining = remaining[len(expected_function_call):]
     open_parentheses = 1
@@ -196,7 +196,7 @@ def parse_string_content(argument):
     >>> parse_string_content('1 2 3')
     ''
     """
-    assert(type(argument) is str)
+    assert type(argument) is str
     string_content = ""
     in_string = False
     for char in normalize(escape(argument)):
@@ -223,7 +223,7 @@ def count_format_specifiers(format_string):
     >>> count_format_specifiers("foo %d bar %i foo %% foo %*d foo")
     4
     """
-    assert(type(format_string) is str)
+    assert type(format_string) is str
     n = 0
     in_specifier = False
     for i, char in enumerate(format_string):

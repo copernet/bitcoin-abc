@@ -2,12 +2,12 @@
 name: "bitcoin-win-signer"
 distro: "debian"
 suites:
-- "stretch"
+- "buster"
 architectures:
 - "amd64"
 packages:
-- "libssl-dev"
 - "autoconf"
+- "libssl-dev"
 remotes:
 - "url": "https://github.com/bitcoin-core/bitcoin-detached-sigs.git"
   "dir": "signature"

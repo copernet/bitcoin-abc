@@ -1,43 +1,42 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-set -euo pipefail
+export LC_ALL=C
+
+set -euxo pipefail
 
 ###
 # Initial Block Download script.
-# 
+#
 # Runs a bitcoind process until initial block download is complete.
 # Forwards the exit code from bitcoind onward.
-#
+###
 
 MYPID=$$
 
 # Setup
-mkdir -p ibd
-touch ibd/debug.log
-chmod +x bitcoind
+: "${TOPLEVEL:=$(git rev-parse --show-toplevel)}"
+
+DATA_DIR="${TOPLEVEL}/ibd"
+mkdir -p "${DATA_DIR}"
+DEBUG_LOG="${DATA_DIR}/debug.log"
 
 cleanup() {
-    echo "Terminating (pid: ${1})"
-    pkill -P ${MYPID} tail || true
+  # Cleanup background processes spawned by this script.
+  pkill -P ${MYPID} tail || true
 }
+trap "cleanup" EXIT
 
-# Launch bitcoind using this script's parameters
-./bitcoind -datadir=ibd $* &
-bitcoin_pid=$!
+# Make sure the debug log exists so that tail does not fail
+touch "${DEBUG_LOG}"
+# Show some progress
+tail -f "${DEBUG_LOG}" | grep 'UpdateTip' | awk 'NR % 10000 == 0' &
 
-trap "cleanup ${bitcoin_pid}" EXIT
+callback() {
+  echo "Initial block download complete."
 
-# Wait for IBD to finish and kill the daemon
-( 
-    set +o pipefail
-    tail -f ibd/debug.log | grep -m 1 'progress=1.000000'
-    echo "Initial block download complete, killing bitcoin daemon."
-    kill ${bitcoin_pid}
-) &
+  # TODO Add more checks to see if IBD completed as expected.
+  # These checks will exit the subshell with a non-zero exit code.
+}
+export -f callback
 
-# Show some progress 
-tail -f ibd/debug.log | grep 'UpdateTip' | awk 'NR % 10000 == 0' &
-
-# Wait for bitcoind to exit
-wait ${bitcoin_pid}
-exit $?
+LOG_FILE="${DEBUG_LOG}" "${TOPLEVEL}/contrib/devtools/bitcoind-exit-on-log.sh" --grep 'progress=1.000000' --params "-datadir=${DATA_DIR} $*" --callback callback

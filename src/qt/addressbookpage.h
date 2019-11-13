@@ -7,8 +7,8 @@
 
 #include <QDialog>
 
+class AddressBookSortFilterProxyModel;
 class AddressTableModel;
-class OptionsModel;
 class PlatformStyle;
 
 namespace Ui {
@@ -19,8 +19,6 @@ QT_BEGIN_NAMESPACE
 class QItemSelection;
 class QMenu;
 class QModelIndex;
-class QSortFilterProxyModel;
-class QTableView;
 QT_END_NAMESPACE
 
 /** Widget that shows a list of sending or receiving addresses. */
@@ -36,7 +34,7 @@ public:
     };
 
     explicit AddressBookPage(const PlatformStyle *platformStyle, Mode mode,
-                             Tabs tab, QWidget *parent);
+                             Tabs tab, QWidget *parent = nullptr);
     ~AddressBookPage();
 
     void setModel(AddressTableModel *model);
@@ -51,7 +49,7 @@ private:
     Mode mode;
     Tabs tab;
     QString returnValue;
-    QSortFilterProxyModel *proxyModel;
+    AddressBookSortFilterProxyModel *proxyModel;
     QMenu *contextMenu;
     // to be able to explicitly disable it
     QAction *deleteAction;
@@ -60,12 +58,15 @@ private:
 private Q_SLOTS:
     /** Delete currently selected address entry */
     void on_deleteAddress_clicked();
-    /** Create a new address for receiving coins and / or add a new address book
-     * entry */
+    /**
+     * Create a new address for receiving coins and / or add a new address book
+     * entry.
+     */
     void on_newAddress_clicked();
     /** Copy address of currently selected address entry to clipboard */
     void on_copyAddress_clicked();
-    /** Copy label of currently selected address entry to clipboard (no button)
+    /**
+     * Copy label of currently selected address entry to clipboard (no button)
      */
     void onCopyLabelAction();
     /** Edit currently selected address entry (no button) */

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2016 The Bitcoin Core developers
+# Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the wallet accounts properly when there are cloned transactions with malleated scriptsigs."""
@@ -16,7 +16,9 @@ from test_framework.util import (
 class TxnMallTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
-        self.extra_args = [["-noparkdeepreorg"], ["-noparkdeepreorg"], [], []]
+        self.extra_args = [["-noparkdeepreorg", '-deprecatedrpc=accounts'],
+                           ["-noparkdeepreorg", '-deprecatedrpc=accounts'],
+                           ['-deprecatedrpc=accounts'], ['-deprecatedrpc=accounts']]
 
     def add_options(self, parser):
         parser.add_argument("--mineblock", dest="mine_block", default=False, action="store_true",
@@ -29,7 +31,9 @@ class TxnMallTest(BitcoinTestFramework):
         disconnect_nodes(self.nodes[2], self.nodes[1])
 
     def run_test(self):
-        # All nodes should start with 1,250 BTC:
+        output_type = "legacy"
+
+        # All nodes should start with 1,250 BCH:
         starting_balance = 1250
         for i in range(4):
             assert_equal(self.nodes[i].getbalance(), starting_balance)
@@ -39,11 +43,11 @@ class TxnMallTest(BitcoinTestFramework):
         # Assign coins to foo and bar accounts:
         self.nodes[0].settxfee(.001)
 
-        node0_address_foo = self.nodes[0].getnewaddress("foo")
+        node0_address_foo = self.nodes[0].getnewaddress("foo", output_type)
         fund_foo_txid = self.nodes[0].sendfrom("", node0_address_foo, 1219)
         fund_foo_tx = self.nodes[0].gettransaction(fund_foo_txid)
 
-        node0_address_bar = self.nodes[0].getnewaddress("bar")
+        node0_address_bar = self.nodes[0].getnewaddress("bar", output_type)
         fund_bar_txid = self.nodes[0].sendfrom("", node0_address_bar, 29)
         fund_bar_tx = self.nodes[0].gettransaction(fund_bar_txid)
 
@@ -69,7 +73,7 @@ class TxnMallTest(BitcoinTestFramework):
 
         # createrawtransaction randomizes the order of its outputs, so swap them if necessary.
         # output 0 is at version+#inputs+input+sigstub+sequence+#outputs
-        # 40 BTC serialized is 00286bee00000000
+        # 40 BCH serialized is 00286bee00000000
         pos0 = 2 * (4 + 1 + 36 + 1 + 4 + 1)
         hex40 = "00286bee00000000"
         output_len = 16 + 2 + 2 * \
@@ -123,6 +127,7 @@ class TxnMallTest(BitcoinTestFramework):
         # Send clone and its parent to miner
         self.nodes[2].sendrawtransaction(fund_foo_tx["hex"])
         txid1_clone = self.nodes[2].sendrawtransaction(tx1_clone["hex"])
+
         # ... mine a block...
         self.nodes[2].generate(1)
 
@@ -143,7 +148,7 @@ class TxnMallTest(BitcoinTestFramework):
         assert_equal(tx1_clone["confirmations"], 2)
         assert_equal(tx2["confirmations"], 1)
 
-        # Check node0's total balance; should be same as before the clone, + 100 BTC for 2 matured,
+        # Check node0's total balance; should be same as before the clone, + 100 BCH for 2 matured,
         # less possible orphaned matured subsidy
         expected += 100
         if (self.options.mine_block):

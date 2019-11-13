@@ -17,20 +17,16 @@ QT_BEGIN_NAMESPACE
 class QDataWidgetMapper;
 QT_END_NAMESPACE
 
-/** Dialog for editing an address and associated information.
+/**
+ * Dialog for editing an address and associated information.
  */
 class EditAddressDialog : public QDialog {
     Q_OBJECT
 
 public:
-    enum Mode {
-        NewReceivingAddress,
-        NewSendingAddress,
-        EditReceivingAddress,
-        EditSendingAddress
-    };
+    enum Mode { NewSendingAddress, EditReceivingAddress, EditSendingAddress };
 
-    explicit EditAddressDialog(Mode mode, QWidget *parent);
+    explicit EditAddressDialog(Mode mode, QWidget *parent = nullptr);
     ~EditAddressDialog();
 
     void setModel(AddressTableModel *model);
@@ -44,6 +40,12 @@ public Q_SLOTS:
 
 private:
     bool saveCurrentRow();
+
+    /**
+     * Return a descriptive string when adding an already-existing address
+     * fails.
+     */
+    QString getDuplicateAddressWarning() const;
 
     Ui::EditAddressDialog *ui;
     QDataWidgetMapper *mapper;

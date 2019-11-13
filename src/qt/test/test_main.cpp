@@ -3,23 +3,23 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #if defined(HAVE_CONFIG_H)
-#include "config/bitcoin-config.h"
+#include <config/bitcoin-config.h>
 #endif
 
-#include "compat/setenv.h"
+#include <chainparams.h>
+#include <compat/setenv.h>
+#include <key.h>
+#include <util/system.h>
 
-#include "bitcoinaddressvalidatortests.h"
-#include "chainparams.h"
-#include "compattests.h"
-#include "guiutiltests.h"
-#include "key.h"
-#include "rpcnestedtests.h"
-#include "uritests.h"
-#include "util.h"
-
+#include <qt/test/bitcoinaddressvalidatortests.h>
+#include <qt/test/compattests.h>
+#include <qt/test/guiutiltests.h>
+#include <qt/test/rpcnestedtests.h>
+#include <qt/test/uritests.h>
 #ifdef ENABLE_WALLET
-#include "paymentservertests.h"
-#include "wallettests.h"
+#include <qt/test/addressbooktests.h>
+#include <qt/test/paymentservertests.h>
+#include <qt/test/wallettests.h>
 #endif
 
 #include <QApplication>
@@ -50,11 +50,18 @@ int main(int argc, char *argv[]) {
     SetupNetworking();
     SelectParams(CBaseChainParams::MAIN);
     noui_connect();
+    ClearDatadirCache();
+    fs::path pathTemp =
+        fs::temp_directory_path() / strprintf("test_bitcoin-qt_%lu_%i",
+                                              (unsigned long)GetTime(),
+                                              (int)GetRand(100000));
+    fs::create_directories(pathTemp);
+    gArgs.ForceSetArg("-datadir", pathTemp.string());
 
     bool fInvalid = false;
 
     // Prefer the "minimal" platform for the test instead of the normal default
-    // platform ("xcb", "windows", or "cocoa") so tests can't unintentially
+    // platform ("xcb", "windows", or "cocoa") so tests can't unintentionally
     // interfere with any background GUIs and don't require extra resources.
     setenv("QT_QPA_PLATFORM", "minimal", 0);
 
@@ -98,7 +105,13 @@ int main(int argc, char *argv[]) {
     if (QTest::qExec(&test7) != 0) {
         fInvalid = true;
     }
+    AddressBookTests test8;
+    if (QTest::qExec(&test8) != 0) {
+        fInvalid = true;
+    }
 #endif
+
+    fs::remove_all(pathTemp);
 
     return fInvalid;
 }

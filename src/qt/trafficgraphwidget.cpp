@@ -2,9 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "trafficgraphwidget.h"
-#include "clientmodel.h"
-#include "interfaces/node.h"
+#include <qt/trafficgraphwidget.h>
+
+#include <interfaces/node.h>
+#include <qt/clientmodel.h>
 
 #include <QColor>
 #include <QPainter>
@@ -21,7 +22,7 @@ TrafficGraphWidget::TrafficGraphWidget(QWidget *parent)
     : QWidget(parent), timer(0), fMax(0.0f), nMins(0), vSamplesIn(),
       vSamplesOut(), nLastBytesIn(0), nLastBytesOut(0), clientModel(0) {
     timer = new QTimer(this);
-    connect(timer, SIGNAL(timeout()), SLOT(updateRates()));
+    connect(timer, &QTimer::timeout, this, &TrafficGraphWidget::updateRates);
 }
 
 void TrafficGraphWidget::setClientModel(ClientModel *model) {
@@ -37,13 +38,14 @@ int TrafficGraphWidget::getGraphRangeMins() const {
 }
 
 void TrafficGraphWidget::paintPath(QPainterPath &path, QQueue<float> &samples) {
-    int h = height() - YMARGIN * 2, w = width() - XMARGIN * 2;
-    int sampleCount = samples.size(), x = XMARGIN + w, y;
+    int sampleCount = samples.size();
     if (sampleCount > 0) {
+        int h = height() - YMARGIN * 2, w = width() - XMARGIN * 2;
+        int x = XMARGIN + w;
         path.moveTo(x, YMARGIN + h);
         for (int i = 0; i < sampleCount; ++i) {
             x = XMARGIN + w - w * i / DESIRED_SAMPLES;
-            y = YMARGIN + h - (int)(h * samples.at(i) / fMax);
+            int y = YMARGIN + h - (int)(h * samples.at(i) / fMax);
             path.lineTo(x, y);
         }
         path.lineTo(x, YMARGIN + h);
@@ -131,10 +133,10 @@ void TrafficGraphWidget::updateRates() {
     }
 
     float tmax = 0.0f;
-    for (float f : vSamplesIn) {
+    for (const float f : vSamplesIn) {
         if (f > tmax) tmax = f;
     }
-    for (float f : vSamplesOut) {
+    for (const float f : vSamplesOut) {
         if (f > tmax) tmax = f;
     }
     fMax = tmax;

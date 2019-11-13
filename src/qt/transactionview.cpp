@@ -2,22 +2,21 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "transactionview.h"
+#include <qt/transactionview.h>
 
-#include "addresstablemodel.h"
-#include "bitcoinunits.h"
-#include "csvmodelwriter.h"
-#include "editaddressdialog.h"
-#include "guiutil.h"
-#include "optionsmodel.h"
-#include "platformstyle.h"
-#include "transactiondescdialog.h"
-#include "transactionfilterproxy.h"
-#include "transactionrecord.h"
-#include "transactiontablemodel.h"
-#include "walletmodel.h"
-
-#include "ui_interface.h"
+#include <qt/addresstablemodel.h>
+#include <qt/bitcoinunits.h>
+#include <qt/csvmodelwriter.h>
+#include <qt/editaddressdialog.h>
+#include <qt/guiutil.h>
+#include <qt/optionsmodel.h>
+#include <qt/platformstyle.h>
+#include <qt/transactiondescdialog.h>
+#include <qt/transactionfilterproxy.h>
+#include <qt/transactionrecord.h>
+#include <qt/transactiontablemodel.h>
+#include <qt/walletmodel.h>
+#include <ui_interface.h>
 
 #include <QComboBox>
 #include <QDateTimeEdit>
@@ -32,6 +31,7 @@
 #include <QScrollBar>
 #include <QSignalMapper>
 #include <QTableView>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -103,9 +103,10 @@ TransactionView::TransactionView(const PlatformStyle *platformStyle,
 
     hlayout->addWidget(typeWidget);
 
-    addressWidget = new QLineEdit(this);
-    addressWidget->setPlaceholderText(tr("Enter address or label to search"));
-    hlayout->addWidget(addressWidget);
+    search_widget = new QLineEdit(this);
+    search_widget->setPlaceholderText(
+        tr("Enter address, transaction id, or label to search"));
+    hlayout->addWidget(search_widget);
 
     amountWidget = new QLineEdit(this);
     amountWidget->setPlaceholderText(tr("Min amount"));
@@ -116,6 +117,17 @@ TransactionView::TransactionView(const PlatformStyle *platformStyle,
     }
     amountWidget->setValidator(new QDoubleValidator(0, 1e20, 8, this));
     hlayout->addWidget(amountWidget);
+
+    // Delay before filtering transactions in ms
+    static const int input_filter_delay = 200;
+
+    QTimer *amount_typing_delay = new QTimer(this);
+    amount_typing_delay->setSingleShot(true);
+    amount_typing_delay->setInterval(input_filter_delay);
+
+    QTimer *prefix_typing_delay = new QTimer(this);
+    prefix_typing_delay->setSingleShot(true);
+    prefix_typing_delay->setInterval(input_filter_delay);
 
     QVBoxLayout *vlayout = new QVBoxLayout(this);
     vlayout->setContentsMargins(0, 0, 0, 0);
@@ -170,33 +182,56 @@ TransactionView::TransactionView(const PlatformStyle *platformStyle,
     mapperThirdPartyTxUrls = new QSignalMapper(this);
 
     // Connect actions
-    connect(mapperThirdPartyTxUrls, SIGNAL(mapped(QString)), this,
-            SLOT(openThirdPartyTxUrl(QString)));
+    connect(mapperThirdPartyTxUrls,
+            static_cast<void (QSignalMapper::*)(const QString &)>(
+                &QSignalMapper::mapped),
+            this, &TransactionView::openThirdPartyTxUrl);
 
-    connect(dateWidget, SIGNAL(activated(int)), this, SLOT(chooseDate(int)));
-    connect(typeWidget, SIGNAL(activated(int)), this, SLOT(chooseType(int)));
-    connect(watchOnlyWidget, SIGNAL(activated(int)), this,
-            SLOT(chooseWatchonly(int)));
-    connect(addressWidget, SIGNAL(textChanged(QString)), this,
-            SLOT(changedPrefix(QString)));
-    connect(amountWidget, SIGNAL(textChanged(QString)), this,
-            SLOT(changedAmount(QString)));
+    connect(dateWidget,
+            static_cast<void (QComboBox::*)(int)>(&QComboBox::activated), this,
+            &TransactionView::chooseDate);
+    connect(typeWidget,
+            static_cast<void (QComboBox::*)(int)>(&QComboBox::activated), this,
+            &TransactionView::chooseType);
+    connect(watchOnlyWidget,
+            static_cast<void (QComboBox::*)(int)>(&QComboBox::activated), this,
+            &TransactionView::chooseWatchonly);
+    connect(amountWidget, &QLineEdit::textChanged, amount_typing_delay,
+            static_cast<void (QTimer::*)()>(&QTimer::start));
+    connect(amount_typing_delay, &QTimer::timeout, this,
+            &TransactionView::changedAmount);
+    connect(search_widget, &QLineEdit::textChanged, prefix_typing_delay,
+            static_cast<void (QTimer::*)()>(&QTimer::start));
+    connect(prefix_typing_delay, &QTimer::timeout, this,
+            &TransactionView::changedSearch);
 
-    connect(view, SIGNAL(doubleClicked(QModelIndex)), this,
-            SIGNAL(doubleClicked(QModelIndex)));
-    connect(view, SIGNAL(customContextMenuRequested(QPoint)), this,
-            SLOT(contextualMenu(QPoint)));
+    connect(view, &QTableView::doubleClicked, this,
+            &TransactionView::doubleClicked);
+    connect(view, &QTableView::customContextMenuRequested, this,
+            &TransactionView::contextualMenu);
 
-    connect(abandonAction, SIGNAL(triggered()), this, SLOT(abandonTx()));
-    connect(copyAddressAction, SIGNAL(triggered()), this, SLOT(copyAddress()));
-    connect(copyLabelAction, SIGNAL(triggered()), this, SLOT(copyLabel()));
-    connect(copyAmountAction, SIGNAL(triggered()), this, SLOT(copyAmount()));
-    connect(copyTxIDAction, SIGNAL(triggered()), this, SLOT(copyTxID()));
-    connect(copyTxHexAction, SIGNAL(triggered()), this, SLOT(copyTxHex()));
-    connect(copyTxPlainText, SIGNAL(triggered()), this,
-            SLOT(copyTxPlainText()));
-    connect(editLabelAction, SIGNAL(triggered()), this, SLOT(editLabel()));
-    connect(showDetailsAction, SIGNAL(triggered()), this, SLOT(showDetails()));
+    connect(abandonAction, &QAction::triggered, this,
+            &TransactionView::abandonTx);
+    connect(copyAddressAction, &QAction::triggered, this,
+            &TransactionView::copyAddress);
+    connect(copyLabelAction, &QAction::triggered, this,
+            &TransactionView::copyLabel);
+    connect(copyAmountAction, &QAction::triggered, this,
+            &TransactionView::copyAmount);
+    connect(copyTxIDAction, &QAction::triggered, this,
+            &TransactionView::copyTxID);
+    connect(copyTxHexAction, &QAction::triggered, this,
+            &TransactionView::copyTxHex);
+    connect(copyTxPlainText, &QAction::triggered, this,
+            &TransactionView::copyTxPlainText);
+    connect(editLabelAction, &QAction::triggered, this,
+            &TransactionView::editLabel);
+    connect(showDetailsAction, &QAction::triggered, this,
+            &TransactionView::showDetails);
+    // Double-clicking on a transaction on the transaction history page shows
+    // details
+    connect(this, &TransactionView::doubleClicked, this,
+            &TransactionView::showDetails);
 }
 
 void TransactionView::setModel(WalletModel *_model) {
@@ -251,8 +286,10 @@ void TransactionView::setModel(WalletModel *_model) {
                         contextMenu->addSeparator();
                     }
                     contextMenu->addAction(thirdPartyTxUrlAction);
-                    connect(thirdPartyTxUrlAction, SIGNAL(triggered()),
-                            mapperThirdPartyTxUrls, SLOT(map()));
+                    connect(thirdPartyTxUrlAction, &QAction::triggered,
+                            mapperThirdPartyTxUrls,
+                            static_cast<void (QSignalMapper::*)()>(
+                                &QSignalMapper::map));
                     mapperThirdPartyTxUrls->setMapping(thirdPartyTxUrlAction,
                                                        listUrls[i].trimmed());
                 }
@@ -263,8 +300,8 @@ void TransactionView::setModel(WalletModel *_model) {
         updateWatchOnlyColumn(_model->wallet().haveWatchOnly());
 
         // Watch-only signal
-        connect(_model, SIGNAL(notifyWatchonlyChanged(bool)), this,
-                SLOT(updateWatchOnlyColumn(bool)));
+        connect(_model, &WalletModel::notifyWatchonlyChanged, this,
+                &TransactionView::updateWatchOnlyColumn);
     }
 }
 
@@ -333,22 +370,22 @@ void TransactionView::chooseWatchonly(int idx) {
             watchOnlyWidget->itemData(idx).toInt()));
 }
 
-void TransactionView::changedPrefix(const QString &prefix) {
+void TransactionView::changedSearch() {
     if (!transactionProxyModel) {
         return;
     }
 
-    transactionProxyModel->setAddressPrefix(prefix);
+    transactionProxyModel->setSearchString(search_widget->text());
 }
 
-void TransactionView::changedAmount(const QString &amount) {
+void TransactionView::changedAmount() {
     if (!transactionProxyModel) {
         return;
     }
 
     Amount amount_parsed = Amount::zero();
-    if (BitcoinUnits::parse(model->getOptionsModel()->getDisplayUnit(), amount,
-                            &amount_parsed)) {
+    if (BitcoinUnits::parse(model->getOptionsModel()->getDisplayUnit(),
+                            amountWidget->text(), &amount_parsed)) {
         transactionProxyModel->setMinAmount(amount_parsed);
     } else {
         transactionProxyModel->setMinAmount(Amount::zero());
@@ -579,9 +616,10 @@ QWidget *TransactionView::createDateRangeWidget() {
     dateRangeWidget->setVisible(false);
 
     // Notify on change
-    connect(dateFrom, SIGNAL(dateChanged(QDate)), this,
-            SLOT(dateRangeChanged()));
-    connect(dateTo, SIGNAL(dateChanged(QDate)), this, SLOT(dateRangeChanged()));
+    connect(dateFrom, &QDateTimeEdit::dateChanged, this,
+            &TransactionView::dateRangeChanged);
+    connect(dateTo, &QDateTimeEdit::dateChanged, this,
+            &TransactionView::dateRangeChanged);
 
     return dateRangeWidget;
 }

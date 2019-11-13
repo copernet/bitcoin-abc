@@ -17,6 +17,7 @@ from test_framework.util import (
     count_bytes,
     sync_blocks,
     sync_mempools,
+    wait_until,
 )
 
 
@@ -24,8 +25,7 @@ class WalletTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
         self.setup_clean_chain = True
-        self.extra_args = [
-            ['-usehd={:d}'.format(i % 2 == 0)] for i in range(4)]
+        self.extra_args = [['-deprecatedrpc=accounts']] * 4
 
     def setup_network(self):
         self.add_nodes(4, self.extra_args)
@@ -82,7 +82,7 @@ class WalletTest(BitcoinTestFramework):
             txid=confirmed_txid, n=confirmed_index, include_mempool=True)
         assert_equal(txout['value'], 50)
 
-        # Send 21 BTC from 0 to 2 using sendtoaddress call.
+        # Send 21 BCH from 0 to 2 using sendtoaddress call.
         # Locked memory should use at least 32 bytes to sign each transaction
         self.log.info("test getmemoryinfo")
         memory_before = self.nodes[0].getmemoryinfo()
@@ -90,8 +90,8 @@ class WalletTest(BitcoinTestFramework):
         mempool_txid = self.nodes[0].sendtoaddress(
             self.nodes[2].getnewaddress(), 10)
         memory_after = self.nodes[0].getmemoryinfo()
-        assert(memory_before['locked']['used'] +
-               64 <= memory_after['locked']['used'])
+        assert memory_before['locked']['used'] + \
+            64 <= memory_after['locked']['used']
 
         self.log.info("test gettxout (second part)")
         # utxo spent in mempool should be visible if you exclude mempool
@@ -121,12 +121,20 @@ class WalletTest(BitcoinTestFramework):
         # Exercise locking of unspent outputs
         unspent_0 = self.nodes[2].listunspent()[0]
         unspent_0 = {"txid": unspent_0["txid"], "vout": unspent_0["vout"]}
+        assert_raises_rpc_error(-8, "Invalid parameter, expected locked output",
+                                self.nodes[2].lockunspent, True, [unspent_0])
         self.nodes[2].lockunspent(False, [unspent_0])
+        assert_raises_rpc_error(-8, "Invalid parameter, output already locked",
+                                self.nodes[2].lockunspent, False, [unspent_0])
         assert_raises_rpc_error(-4, "Insufficient funds",
                                 self.nodes[2].sendtoaddress, self.nodes[2].getnewaddress(), 20)
         assert_equal([unspent_0], self.nodes[2].listlockunspent())
         self.nodes[2].lockunspent(True, [unspent_0])
         assert_equal(len(self.nodes[2].listlockunspent()), 0)
+        assert_raises_rpc_error(-8, "Invalid parameter, unknown transaction", self.nodes[2].lockunspent, False, [
+                                {"txid": "0000000000000000000000000000000000", "vout": 0}])
+        assert_raises_rpc_error(-8, "Invalid parameter, vout index out of bounds",
+                                self.nodes[2].lockunspent, False, [{"txid": unspent_0["txid"], "vout": 999}])
 
         # Have node1 generate 100 blocks (so node0 can recover the fee)
         self.nodes[1].generate(100)
@@ -166,7 +174,13 @@ class WalletTest(BitcoinTestFramework):
         assert_equal(self.nodes[2].getbalance(), 94)
         assert_equal(self.nodes[2].getbalance("from1"), 94 - 21)
 
-        # Send 10 BTC normal
+        # Verify that a spent output cannot be locked anymore
+        spent_0 = {"txid": node0utxos[0]["txid"],
+                   "vout": node0utxos[0]["vout"]}
+        assert_raises_rpc_error(-8, "Invalid parameter, expected unspent output",
+                                self.nodes[0].lockunspent, False, [spent_0])
+
+        # Send 10 BCH normal
         old_balance = self.nodes[2].getbalance()
         address = self.nodes[0].getnewaddress("test")
         fee_per_byte = Decimal('0.001') / 1000
@@ -179,7 +193,7 @@ class WalletTest(BitcoinTestFramework):
                                            fee_per_byte, ctx.billable_size())
         assert_equal(self.nodes[0].getbalance(), Decimal('10'))
 
-        # Send 10 BTC with subtract fee from amount
+        # Send 10 BCH with subtract fee from amount
         txid = self.nodes[2].sendtoaddress(address, 10, "", "", True)
         self.nodes[2].generate(1)
         self.sync_all([self.nodes[0:3]])
@@ -188,7 +202,7 @@ class WalletTest(BitcoinTestFramework):
         node_0_bal = self.check_fee_amount(self.nodes[0].getbalance(), Decimal(
             '20'), fee_per_byte, count_bytes(self.nodes[2].getrawtransaction(txid)))
 
-        # Sendmany 10 BTC
+        # Sendmany 10 BCH
         txid = self.nodes[2].sendmany('from1', {address: 10}, 0, "", [])
         self.nodes[2].generate(1)
         self.sync_all([self.nodes[0:3]])
@@ -198,7 +212,7 @@ class WalletTest(BitcoinTestFramework):
         ), node_2_bal - Decimal('10'), fee_per_byte, ctx.billable_size())
         assert_equal(self.nodes[0].getbalance(), node_0_bal)
 
-        # Sendmany 10 BTC with subtract fee from amount
+        # Sendmany 10 BCH with subtract fee from amount
         txid = self.nodes[2].sendmany('from1', {address: 10}, 0, "", [address])
         self.nodes[2].generate(1)
         self.sync_all([self.nodes[0:3]])
@@ -224,7 +238,7 @@ class WalletTest(BitcoinTestFramework):
         assert_equal(set(relayed), {txid1, txid2})
         sync_mempools(self.nodes)
 
-        assert(txid1 in self.nodes[3].getrawmempool())
+        assert txid1 in self.nodes[3].getrawmempool()
 
         # Exercise balance rpcs
         assert_equal(self.nodes[0].getwalletinfo()["unconfirmed_balance"], 1)
@@ -259,7 +273,7 @@ class WalletTest(BitcoinTestFramework):
             if uTx['txid'] == zeroValueTxid:
                 found = True
                 assert_equal(uTx['amount'], Decimal('0'))
-        assert(found)
+        assert found
 
         # do some -walletbroadcast tests
         self.stop_nodes()
@@ -343,7 +357,7 @@ class WalletTest(BitcoinTestFramework):
         self.nodes[1].importaddress(address_to_import)
 
         # 3. Validate that the imported address is watch-only on node1
-        assert(self.nodes[1].validateaddress(address_to_import)["iswatchonly"])
+        assert self.nodes[1].getaddressinfo(address_to_import)["iswatchonly"]
 
         # 4. Check that the unspents after import are not spendable
         assert_array_result(self.nodes[1].listunspent(),
@@ -385,7 +399,7 @@ class WalletTest(BitcoinTestFramework):
                 addr = self.nodes[0].getaccountaddress(s)
                 label = self.nodes[0].getaccount(addr)
                 assert_equal(label, s)
-                assert(s in self.nodes[0].listaccounts().keys())
+                assert s in self.nodes[0].listaccounts().keys()
         self.nodes[0].ensure_ascii = True  # restore to default
 
         # maintenance tests
@@ -402,12 +416,16 @@ class WalletTest(BitcoinTestFramework):
             self.log.info("check " + m)
             self.stop_nodes()
             # set lower ancestor limit for later
-            self.start_node(0, [m, "-limitancestorcount=" + str(chainlimit)])
-            self.start_node(1, [m, "-limitancestorcount=" + str(chainlimit)])
-            self.start_node(2, [m, "-limitancestorcount=" + str(chainlimit)])
-            while m == '-reindex' and [block_count] * 3 != [self.nodes[i].getblockcount() for i in range(3)]:
+            self.start_node(0, [m, "-deprecatedrpc=accounts",
+                                "-limitancestorcount=" + str(chainlimit)])
+            self.start_node(1, [m, "-deprecatedrpc=accounts",
+                                "-limitancestorcount=" + str(chainlimit)])
+            self.start_node(2, [m, "-deprecatedrpc=accounts",
+                                "-limitancestorcount=" + str(chainlimit)])
+            if m == '-reindex':
                 # reindex will leave rpc warm up "early"; Wait for it to finish
-                time.sleep(0.1)
+                wait_until(lambda: [block_count] * 3 ==
+                           [self.nodes[i].getblockcount() for i in range(3)])
             assert_equal(balance_nodes, [
                          self.nodes[i].getbalance() for i in range(3)])
 
@@ -451,9 +469,9 @@ class WalletTest(BitcoinTestFramework):
         # The tx will be stored in the wallet but not accepted to the mempool
         extra_txid = self.nodes[0].sendtoaddress(
             sending_addr, Decimal('0.0001'))
-        assert(extra_txid not in self.nodes[0].getrawmempool())
-        assert(extra_txid in [tx["txid"]
-                              for tx in self.nodes[0].listtransactions()])
+        assert extra_txid not in self.nodes[0].getrawmempool()
+        assert extra_txid in [tx["txid"]
+                              for tx in self.nodes[0].listtransactions()]
         self.nodes[0].abandontransaction(extra_txid)
         total_txs = len(self.nodes[0].listtransactions("*", 99999))
 
@@ -461,7 +479,7 @@ class WalletTest(BitcoinTestFramework):
         # Double chain limit but require combining inputs, so we pass SelectCoinsMinConf
         self.stop_node(0)
         self.start_node(0, extra_args=[
-                        "-walletrejectlongchains", "-limitancestorcount=" + str(2 * chainlimit)])
+                        "-deprecatedrpc=accounts", "-walletrejectlongchains", "-limitancestorcount=" + str(2 * chainlimit)])
 
         # wait for loadmempool
         timeout = 10
@@ -478,6 +496,19 @@ class WalletTest(BitcoinTestFramework):
         # Verify nothing new in wallet
         assert_equal(total_txs, len(
             self.nodes[0].listtransactions("*", 99999)))
+
+        # Test getaddressinfo. Note that these addresses are taken from disablewallet.py
+        assert_raises_rpc_error(-5, "Invalid address",
+                                self.nodes[0].getaddressinfo, "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy")
+        address_info = self.nodes[0].getaddressinfo(
+            "mneYUmWYsuk7kySiURxCi3AGxrAqZxLgPZ")
+        assert_equal(address_info['address'],
+                     "bchreg:qp8rs4qyd3aazk22eyzwg7fmdfzmxm02pywavdajx4")
+        assert_equal(address_info["scriptPubKey"],
+                     "76a9144e3854046c7bd1594ac904e4793b6a45b36dea0988ac")
+        assert not address_info["ismine"]
+        assert not address_info["iswatchonly"]
+        assert not address_info["isscript"]
 
 
 if __name__ == '__main__':

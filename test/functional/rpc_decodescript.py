@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-# Copyright (c) 2015-2016 The Bitcoin Core developers
+# Copyright (c) 2015-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
+"""Test decoding scripts via decodescript RPC command."""
 
 from test_framework.messages import CTransaction, FromHex, ToHex
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, bytes_to_hex_str, hex_str_to_bytes
+from test_framework.util import assert_equal, hex_str_to_bytes
 
 
 class DecodeScriptTest(BitcoinTestFramework):
@@ -117,7 +118,7 @@ class DecodeScriptTest(BitcoinTestFramework):
                      public_key + ' OP_CHECKSIG', rpc_result['asm'])
 
     def decoderawtransaction_asm_sighashtype(self):
-        """Tests decoding scripts via RPC command "decoderawtransaction".
+        """Test decoding scripts via RPC command "decoderawtransaction".
 
         This test is in with the "decodescript" tests because they are testing the same "asm" script decodes.
         """
@@ -168,8 +169,7 @@ class DecodeScriptTest(BitcoinTestFramework):
         # some more full transaction tests of varying specific scriptSigs. used instead of
         # tests in decodescript_script_sig because the decodescript RPC is specifically
         # for working on scriptPubKeys (argh!).
-        push_signature = bytes_to_hex_str(
-            txSave.vin[0].scriptSig)[2:(0x48 * 2 + 4)]
+        push_signature = txSave.vin[0].scriptSig.hex()[2:(0x48 * 2 + 4)]
         signature = push_signature[2:]
         der_signature = signature[:-2]
         signature_sighash_decoded = der_signature + '[ALL]'

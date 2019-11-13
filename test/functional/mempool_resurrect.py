@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2016 The Bitcoin Core developers
+# Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
-#
-# Test resurrection of mined transactions when
-# the blockchain is re-organized.
-#
+"""Test resurrection of mined transactions when the blockchain is re-organized."""
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, create_tx
@@ -52,7 +48,7 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
         assert_equal(set(self.nodes[0].getrawmempool()), set())
         for txid in spends1_id + spends2_id:
             tx = self.nodes[0].gettransaction(txid)
-            assert(tx["confirmations"] > 0)
+            assert tx["confirmations"] > 0
 
         # Use invalidateblock to re-org back; all transactions should
         # end up unconfirmed and back in the mempool
@@ -64,7 +60,7 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
             set(self.nodes[0].getrawmempool()), set(spends1_id + spends2_id))
         for txid in spends1_id + spends2_id:
             tx = self.nodes[0].gettransaction(txid)
-            assert(tx["confirmations"] == 0)
+            assert tx["confirmations"] == 0
 
         # Generate another block, they should all get mined
         self.nodes[0].generate(1)
@@ -72,7 +68,7 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
         assert_equal(set(self.nodes[0].getrawmempool()), set())
         for txid in spends1_id + spends2_id:
             tx = self.nodes[0].gettransaction(txid)
-            assert(tx["confirmations"] > 0)
+            assert tx["confirmations"] > 0
 
 
 if __name__ == '__main__':

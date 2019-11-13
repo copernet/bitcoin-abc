@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2016 The Bitcoin Core developers
+# Copyright (c) 2014-2019 The Bitcoin Core developers
 # Copyright (c) 2017 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -16,6 +16,7 @@ For a description of arguments recognized by test scripts, see
 """
 
 import argparse
+from collections import deque
 import configparser
 import datetime
 import os
@@ -104,11 +105,12 @@ class TestCase():
         log_stdout = tempfile.SpooledTemporaryFile(max_size=2**16)
         log_stderr = tempfile.SpooledTemporaryFile(max_size=2**16)
         test_argv = t.split()
-        tmpdir = [os.path.join("--tmpdir={}", "{}_{}").format(
-                  self.tmpdir, re.sub(".py$", "", t), portseed)]
+        testdir = os.path.join("{}", "{}_{}").format(
+            self.tmpdir, re.sub(".py$", "", test_argv[0]), portseed)
+        tmpdir_arg = ["--tmpdir={}".format(testdir)]
         name = t
         time0 = time.time()
-        process = subprocess.Popen([os.path.join(self.tests_dir, test_argv[0])] + test_argv[1:] + self.flags + portseed_arg + tmpdir,
+        process = subprocess.Popen([sys.executable, os.path.join(self.tests_dir, test_argv[0])] + test_argv[1:] + self.flags + portseed_arg + tmpdir_arg,
                                    universal_newlines=True,
                                    stdout=log_stdout,
                                    stderr=log_stderr)
@@ -125,7 +127,7 @@ class TestCase():
         else:
             status = "Failed"
 
-        return TestResult(name, status, int(time.time() - time0), stdout, stderr)
+        return TestResult(self.test_num, name, testdir, status, int(time.time() - time0), stdout, stderr)
 
 
 def on_ci():
@@ -137,7 +139,7 @@ def main():
     config = configparser.ConfigParser()
     configfile = os.path.join(os.path.abspath(
         os.path.dirname(__file__)), "..", "config.ini")
-    config.read_file(open(configfile))
+    config.read_file(open(configfile, encoding="utf8"))
 
     src_dir = config["environment"]["SRCDIR"]
     build_dir = config["environment"]["BUILDDIR"]
@@ -149,11 +151,13 @@ def main():
                                      description=__doc__,
                                      epilog='''
     Help text and arguments for individual test script:''',
-                                     formatter_class=argparse.RawTextHelpFormatter)
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--combinedlogslen', '-c', type=int, default=0,
+                        help='print a combined log (of length n lines) from all test nodes and test framework to the console on failure.')
     parser.add_argument('--coverage', action='store_true',
                         help='generate a basic coverage report for the RPC interface')
     parser.add_argument(
-        '--exclude', '-x', help='specify a comma-seperated-list of scripts to exclude. Do not include the .py extension in the name.')
+        '--exclude', '-x', help='specify a comma-separated-list of scripts to exclude.')
     parser.add_argument('--extended', action='store_true',
                         help='run the extended test suite in addition to the basic tests')
     parser.add_argument('--cutoff', type=int, default=DEFAULT_EXTENDED_CUTOFF,
@@ -163,20 +167,21 @@ def main():
     parser.add_argument('--help', '-h', '-?',
                         action='store_true', help='print help text and exit')
     parser.add_argument('--jobs', '-j', type=int, default=DEFAULT_JOBS,
-                        help='how many test scripts to run in parallel. Default=4.')
+                        help='how many test scripts to run in parallel.')
     parser.add_argument('--keepcache', '-k', action='store_true',
                         help='the default behavior is to flush the cache directory on startup. --keepcache retains the cache from the previous testrun.')
     parser.add_argument('--quiet', '-q', action='store_true',
                         help='only print results summary and failure logs')
     parser.add_argument('--tmpdirprefix', '-t',
                         default=tempfile.gettempdir(), help="Root directory for datadirs")
-    parser.add_argument('--junitouput', '-ju',
-                        default=os.path.join(build_dir, 'junit_results.xml'), help="file that will store JUnit formated test results.")
+    parser.add_argument('--junitoutput', '-J',
+                        default=os.path.join(build_dir, 'junit_results.xml'), help="file that will store JUnit formatted test results.")
 
     args, unknown_args = parser.parse_known_args()
 
-    # Create a set to store arguments and create the passon string
-    tests = set(arg for arg in unknown_args if arg[:2] != "--")
+    # args to be passed on always start with two dashes; tests are the
+    # remaining unknown args
+    tests = [arg for arg in unknown_args if arg[:2] != "--"]
     passon_args = [arg for arg in unknown_args if arg[:2] == "--"]
     passon_args.append("--configfile={}".format(configfile))
 
@@ -223,8 +228,15 @@ def main():
         # Individual tests have been specified. Run specified tests that exist
         # in the all_scripts list. Accept the name with or without .py
         # extension.
-        test_list = [t for t in all_scripts if
-                     (t in tests or re.sub(".py$", "", t) in tests)]
+        individual_tests = [
+            re.sub(r"\.py$", "", t) + ".py" for t in tests if not t.endswith('*')]
+        test_list = []
+        for t in individual_tests:
+            if t in all_scripts:
+                test_list.append(t)
+            else:
+                print("{}WARNING!{} Test '{}' not found in full test list.".format(
+                    BOLD[1], BOLD[0], t))
 
         # Allow for wildcard at the end of the name, so a single input can
         # match multiple tests
@@ -232,8 +244,6 @@ def main():
             if test.endswith('*'):
                 test_list.extend(
                     [t for t in all_scripts if t.startswith(test[:-1])])
-        # Make the list unique
-        test_list = list(set(test_list))
 
         # do not cut off explicitly specified tests
         cutoff = sys.maxsize
@@ -247,12 +257,17 @@ def main():
 
     # Remove the test cases that the user has explicitly asked to exclude.
     if args.exclude:
-        for exclude_test in args.exclude.split(','):
-            if exclude_test + ".py" in test_list:
-                test_list.remove(exclude_test + ".py")
+        tests_excl = [re.sub(r"\.py$", "", t) +
+                      ".py" for t in args.exclude.split(',')]
+        for exclude_test in tests_excl:
+            if exclude_test in test_list:
+                test_list.remove(exclude_test)
+            else:
+                print("{}WARNING!{} Test '{}' not found in current test list.".format(
+                    BOLD[1], BOLD[0], exclude_test))
 
-    # Use and update timings from build_dir only if separate
-    # build directory is used. We do not want to pollute source directory.
+    # Update timings from build_dir only if separate build directory is used.
+    # We do not want to pollute source directory.
     build_timings = None
     if (src_dir != build_dir):
         build_timings = Timings(os.path.join(build_dir, 'timing.json'))
@@ -263,7 +278,7 @@ def main():
 
     # Add test parameters and remove long running tests if needed
     test_list = get_tests_to_run(
-        test_list, TEST_PARAMS, cutoff, src_timings, build_timings)
+        test_list, TEST_PARAMS, cutoff, src_timings)
 
     if not test_list:
         print("No valid test scripts specified. Check that your test is in one "
@@ -275,18 +290,18 @@ def main():
         # and exit.
         parser.print_help()
         subprocess.check_call(
-            [os.path.join(tests_dir, test_list[0]), '-h'])
+            [sys.executable, os.path.join(tests_dir, test_list[0]), '-h'])
         sys.exit(0)
 
     if not args.keepcache:
         shutil.rmtree(os.path.join(build_dir, "test",
                                    "cache"), ignore_errors=True)
 
-    run_tests(test_list, build_dir, tests_dir, args.junitouput,
-              config["environment"]["EXEEXT"], tmpdir, args.jobs, args.coverage, passon_args, build_timings)
+    run_tests(test_list, build_dir, tests_dir, args.junitoutput,
+              tmpdir, args.jobs, args.coverage, passon_args, args.combinedlogslen, build_timings)
 
 
-def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, num_jobs, enable_coverage=False, args=[], build_timings=None):
+def run_tests(test_list, build_dir, tests_dir, junitoutput, tmpdir, num_jobs, enable_coverage=False, args=[], combined_logs_len=0, build_timings=None):
     # Warn if bitcoind is already running (unix only)
     try:
         pidofOutput = subprocess.check_output(["pidof", "wormholed"])
@@ -323,11 +338,11 @@ def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, num_j
     if len(test_list) > 1 and num_jobs > 1:
         # Populate cache
         try:
-            subprocess.check_output(
-                [os.path.join(tests_dir, 'create_cache.py')] + flags + [os.path.join("--tmpdir={}", "cache") .format(tmpdir)])
-        except Exception as e:
-            print(e.output)
-            raise e
+            subprocess.check_output([sys.executable, os.path.join(
+                tests_dir, 'create_cache.py')] + flags + [os.path.join("--tmpdir={}", "cache") .format(tmpdir)])
+        except subprocess.CalledProcessError as e:
+            sys.stdout.buffer.write(e.output)
+            raise
 
     # Run Tests
     time0 = time.time()
@@ -336,8 +351,9 @@ def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, num_j
     runtime = int(time.time() - time0)
 
     max_len_name = len(max(test_list, key=len))
-    print_results(test_results, max_len_name, runtime)
-    save_results_as_junit(test_results, junitouput, runtime)
+    print_results(test_results, tests_dir, max_len_name,
+                  runtime, combined_logs_len)
+    save_results_as_junit(test_results, junitoutput, runtime)
 
     if (build_timings is not None):
         build_timings.save_timings(test_results)
@@ -377,14 +393,14 @@ def execute_test_processes(num_jobs, test_list, tests_dir, tmpdir, flags):
         handle_message handles a single message from handle_test_cases
         """
         if isinstance(message, TestCase):
-            running_jobs.add(message.test_case)
+            running_jobs.append((message.test_num, message.test_case))
             print("{}{}{} started".format(BOLD[1], message.test_case, BOLD[0]))
             return
 
         if isinstance(message, TestResult):
             test_result = message
 
-            running_jobs.remove(test_result.name)
+            running_jobs.remove((test_result.num, test_result.name))
             test_results.append(test_result)
 
             if test_result.status == "Passed":
@@ -410,7 +426,7 @@ def execute_test_processes(num_jobs, test_list, tests_dir, tmpdir, flags):
         update_queue.  It serializes the results so we can print nice status update messages.
         """
         printed_status = False
-        running_jobs = set()
+        running_jobs = []
 
         while True:
             message = None
@@ -427,9 +443,9 @@ def execute_test_processes(num_jobs, test_list, tests_dir, tmpdir, flags):
 
                 handle_message(message, running_jobs)
                 update_queue.task_done()
-            except Empty as e:
+            except Empty:
                 if not on_ci():
-                    print("Running jobs: {}".format(", ".join(running_jobs)), end="\r")
+                    print("Running jobs: {}".format(", ".join([j[1] for j in running_jobs])), end="\r")
                     sys.stdout.flush()
                     printed_status = True
 
@@ -483,11 +499,11 @@ def execute_test_processes(num_jobs, test_list, tests_dir, tmpdir, flags):
     return test_results
 
 
-def print_results(test_results, max_len_name, runtime):
+def print_results(test_results, tests_dir, max_len_name, runtime, combined_logs_len):
     results = "\n" + BOLD[1] + "{} | {} | {}\n\n".format(
         "TEST".ljust(max_len_name), "STATUS   ", "DURATION") + BOLD[0]
 
-    test_results.sort(key=lambda result: result.name.lower())
+    test_results.sort(key=TestResult.sort_key)
     all_passed = True
     time_sum = 0
 
@@ -497,9 +513,25 @@ def print_results(test_results, max_len_name, runtime):
         test_result.padding = max_len_name
         results += str(test_result)
 
+        testdir = test_result.testdir
+        if combined_logs_len and os.path.isdir(testdir):
+            # Print the final `combinedlogslen` lines of the combined logs
+            print('{}Combine the logs and print the last {} lines ...{}'.format(
+                BOLD[1], combined_logs_len, BOLD[0]))
+            print('\n============')
+            print('{}Combined log for {}:{}'.format(BOLD[1], testdir, BOLD[0]))
+            print('============\n')
+            combined_logs, _ = subprocess.Popen([sys.executable, os.path.join(
+                tests_dir, 'combine_logs.py'), '-c', testdir], universal_newlines=True, stdout=subprocess.PIPE).communicate()
+            print("\n".join(deque(combined_logs.splitlines(), combined_logs_len)))
+
     status = TICK + "Passed" if all_passed else CROSS + "Failed"
+    if not all_passed:
+        results += RED[1]
     results += BOLD[1] + "\n{} | {} | {} s (accumulated) \n".format(
         "ALL".ljust(max_len_name), status.ljust(9), time_sum) + BOLD[0]
+    if not all_passed:
+        results += RED[0]
     results += "Runtime: {} s\n".format(runtime)
     print(results)
 
@@ -509,13 +541,23 @@ class TestResult():
     Simple data structure to store test result values and print them properly
     """
 
-    def __init__(self, name, status, time, stdout, stderr):
+    def __init__(self, num, name, testdir, status, time, stdout, stderr):
+        self.num = num
         self.name = name
+        self.testdir = testdir
         self.status = status
         self.time = time
         self.padding = 0
         self.stdout = stdout
         self.stderr = stderr
+
+    def sort_key(self):
+        if self.status == "Passed":
+            return 0, self.name.lower()
+        elif self.status == "Failed":
+            return 2, self.name.lower()
+        elif self.status == "Skipped":
+            return 1, self.name.lower()
 
     def __repr__(self):
         if self.status == "Passed":
@@ -544,7 +586,7 @@ def get_all_scripts_from_disk(test_dir, non_scripts):
     return list(python_files - set(non_scripts))
 
 
-def get_tests_to_run(test_list, test_params, cutoff, src_timings, build_timings=None):
+def get_tests_to_run(test_list, test_params, cutoff, src_timings):
     """
     Returns only test that will not run longer that cutoff.
     Long running tests are returned first to favor running tests in parallel
@@ -552,13 +594,7 @@ def get_tests_to_run(test_list, test_params, cutoff, src_timings, build_timings=
     """
 
     def get_test_time(test):
-        if build_timings is not None:
-            timing = next(
-                (x['time'] for x in build_timings.existing_timings if x['name'] == test), None)
-            if timing is not None:
-                return timing
-
-        # try source directory. Return 0 if test is unknown to always run it
+        # Return 0 if test is unknown to always run it
         return next(
             (x['time'] for x in src_timings.existing_timings if x['name'] == test), 0)
 
@@ -630,7 +666,7 @@ class RPCCoverage():
         if not os.path.isfile(coverage_ref_filename):
             raise RuntimeError("No coverage reference found")
 
-        with open(coverage_ref_filename, 'r') as f:
+        with open(coverage_ref_filename, 'r', encoding="utf8") as f:
             all_cmds.update([i.strip() for i in f.readlines()])
 
         for root, dirs, files in os.walk(self.dir):
@@ -639,7 +675,7 @@ class RPCCoverage():
                     coverage_filenames.add(os.path.join(root, filename))
 
         for filename in coverage_filenames:
-            with open(filename, 'r') as f:
+            with open(filename, 'r', encoding="utf8") as f:
                 covered_cmds.update([i.strip() for i in f.readlines()])
 
         return all_cmds - covered_cmds
@@ -693,7 +729,7 @@ class Timings():
 
     def load_timings(self):
         if os.path.isfile(self.timing_file):
-            with open(self.timing_file) as f:
+            with open(self.timing_file, encoding="utf8") as f:
                 return json.load(f)
         else:
             return []
@@ -725,7 +761,7 @@ class Timings():
                                passed_results))
         merged_timings = self.get_merged_timings(new_timings)
 
-        with open(self.timing_file, 'w') as f:
+        with open(self.timing_file, 'w', encoding="utf8") as f:
             json.dump(merged_timings, f, indent=True)
 
 

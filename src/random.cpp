@@ -12,8 +12,8 @@
 #include <crypto/sha512.h>
 #include <logging.h> // for LogPrint()
 #include <support/cleanse.h>
-#include <sync.h>     // for WAIT_LOCK
-#include <utiltime.h> // for GetTime()
+#include <sync.h>      // for WAIT_LOCK
+#include <util/time.h> // for GetTime()
 
 #include <openssl/err.h>
 #include <openssl/rand.h>
@@ -41,7 +41,7 @@
 #endif
 #ifdef HAVE_SYSCTL_ARND
 #include <sys/sysctl.h>
-#include <utilstrencodings.h> // for ARRAYLEN
+#include <util/strencodings.h> // for ARRAYLEN
 #endif
 
 #if defined(__x86_64__) || defined(__amd64__) || defined(__i386__)
@@ -79,19 +79,36 @@ static inline int64_t GetPerformanceCounter() {
 static std::atomic<bool> hwrand_initialized{false};
 static bool rdrand_supported = false;
 static constexpr uint32_t CPUID_F1_ECX_RDRAND = 0x40000000;
-static void RDRandInit() {
+static void InitHardwareRand() {
     uint32_t eax, ebx, ecx, edx;
     if (__get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & CPUID_F1_ECX_RDRAND)) {
-        LogPrintf("Using RdRand as an additional entropy source\n");
         rdrand_supported = true;
     }
     hwrand_initialized.store(true);
 }
+
+static void ReportHardwareRand() {
+    assert(hwrand_initialized.load(std::memory_order_relaxed));
+    if (rdrand_supported) {
+        // This must be done in a separate function, as HWRandInit() may be
+        // indirectly called from global constructors, before logging is
+        // initialized.
+        LogPrintf("Using RdRand as an additional entropy source\n");
+    }
+}
+
 #else
-static void RDRandInit() {}
+/**
+ * Access to other hardware random number generators could be added here later,
+ * assuming it is sufficiently fast (in the order of a few hundred CPU cycles).
+ * Slower sources should probably be invoked separately, and/or only from
+ * RandAddSeedSleep (which is called during idle background operation).
+ */
+static void InitHardwareRand() {}
+static void ReportHardwareRand() {}
 #endif
 
-static bool GetHWRand(uint8_t *ent32) {
+static bool GetHardwareRand(uint8_t *ent32) {
 #if defined(__x86_64__) || defined(__amd64__) || defined(__i386__)
     assert(hwrand_initialized.load(std::memory_order_relaxed));
     if (rdrand_supported) {
@@ -173,16 +190,13 @@ static void RandAddSeedPerfmon() {
     if (ret == ERROR_SUCCESS) {
         RAND_add(vData.data(), nSize, nSize / 100.0);
         memory_cleanse(vData.data(), nSize);
-        LogPrint(BCLog::RAND, "%s: %lu bytes\n", __func__, nSize);
     } else {
-        // Warn only once
-        static bool warned = false;
-        if (!warned) {
-            LogPrintf("%s: Warning: RegQueryValueExA(HKEY_PERFORMANCE_DATA) "
-                      "failed with code %i\n",
-                      __func__, ret);
-            warned = true;
-        }
+        // Performance data is only a best-effort attempt at improving the
+        // situation when the OS randomness (and other sources) aren't
+        // adequate. As a result, failure to read it is isn't considered
+        // critical, so we don't call RandFailure().
+        // TODO: Add logging when the logger is made functional before global
+        // constructors have been invoked.
     }
 #endif
 }
@@ -292,42 +306,83 @@ void GetRandBytes(uint8_t *buf, int num) {
     }
 }
 
-static void AddDataToRng(void *data, size_t len);
+namespace {
+struct RNGState {
+    Mutex m_mutex;
+    uint8_t m_state[32] GUARDED_BY(m_mutex) = {0};
+    uint64_t m_counter GUARDED_BY(m_mutex) = 0;
+
+    RNGState() { InitHardwareRand(); }
+
+    /**
+     * Extract up to 32 bytes of entropy from the RNG state, mixing in new
+     * entropy from hasher.
+     */
+    void MixExtract(uint8_t *out, size_t num, CSHA512 &&hasher) {
+        assert(num <= 32);
+        uint8_t buf[64];
+        static_assert(sizeof(buf) == CSHA512::OUTPUT_SIZE,
+                      "Buffer needs to have hasher's output size");
+        {
+            LOCK(m_mutex);
+            // Write the current state of the RNG into the hasher
+            hasher.Write(m_state, 32);
+            // Write a new counter number into the state
+            hasher.Write((const uint8_t *)&m_counter, sizeof(m_counter));
+            ++m_counter;
+            // Finalize the hasher
+            hasher.Finalize(buf);
+            // Store the last 32 bytes of the hash output as new RNG state.
+            memcpy(m_state, buf + 32, 32);
+        }
+        // If desired, copy (up to) the first 32 bytes of the hash output as
+        // output.
+        if (num) {
+            assert(out != nullptr);
+            memcpy(out, buf, num);
+        }
+        // Best effort cleanup of internal state
+        hasher.Reset();
+        memory_cleanse(buf, 64);
+    }
+};
+
+RNGState &GetRNGState() {
+    // This C++11 idiom relies on the guarantee that static variable are
+    // initialized on first call, even when multiple parallel calls are
+    // permitted.
+    static std::unique_ptr<RNGState> g_rng{new RNGState()};
+    return *g_rng;
+}
+} // namespace
+
+static void AddDataToRng(void *data, size_t len, RNGState &rng);
 
 void RandAddSeedSleep() {
+    RNGState &rng = GetRNGState();
+
     int64_t nPerfCounter1 = GetPerformanceCounter();
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     int64_t nPerfCounter2 = GetPerformanceCounter();
 
     // Combine with and update state
-    AddDataToRng(&nPerfCounter1, sizeof(nPerfCounter1));
-    AddDataToRng(&nPerfCounter2, sizeof(nPerfCounter2));
+    AddDataToRng(&nPerfCounter1, sizeof(nPerfCounter1), rng);
+    AddDataToRng(&nPerfCounter2, sizeof(nPerfCounter2), rng);
 
     memory_cleanse(&nPerfCounter1, sizeof(nPerfCounter1));
     memory_cleanse(&nPerfCounter2, sizeof(nPerfCounter2));
 }
 
-static CWaitableCriticalSection cs_rng_state;
-static uint8_t rng_state[32] = {0};
-static uint64_t rng_counter = 0;
-
-static void AddDataToRng(void *data, size_t len) {
+static void AddDataToRng(void *data, size_t len, RNGState &rng) {
     CSHA512 hasher;
     hasher.Write((const uint8_t *)&len, sizeof(len));
     hasher.Write((const uint8_t *)data, len);
-    uint8_t buf[64];
-    {
-        WAIT_LOCK(cs_rng_state, lock);
-        hasher.Write(rng_state, sizeof(rng_state));
-        hasher.Write((const uint8_t *)&rng_counter, sizeof(rng_counter));
-        ++rng_counter;
-        hasher.Finalize(buf);
-        memcpy(rng_state, buf + 32, 32);
-    }
-    memory_cleanse(buf, 64);
+    rng.MixExtract(nullptr, 0, std::move(hasher));
 }
 
 void GetStrongRandBytes(uint8_t *out, int num) {
+    RNGState &rng = GetRNGState();
+
     assert(num <= 32);
     CSHA512 hasher;
     uint8_t buf[64];
@@ -342,19 +397,12 @@ void GetStrongRandBytes(uint8_t *out, int num) {
     hasher.Write(buf, 32);
 
     // Third source: HW RNG, if available.
-    if (GetHWRand(buf)) {
+    if (GetHardwareRand(buf)) {
         hasher.Write(buf, 32);
     }
 
     // Combine with and update state
-    {
-        WAIT_LOCK(cs_rng_state, lock);
-        hasher.Write(rng_state, sizeof(rng_state));
-        hasher.Write((const uint8_t *)&rng_counter, sizeof(rng_counter));
-        ++rng_counter;
-        hasher.Finalize(buf);
-        memcpy(rng_state, buf + 32, 32);
-    }
+    rng.MixExtract(out, num, std::move(hasher));
 
     // Produce output
     memcpy(out, buf, num);
@@ -403,6 +451,9 @@ uint256 FastRandomContext::rand256() {
 }
 
 std::vector<uint8_t> FastRandomContext::randbytes(size_t len) {
+    if (requires_seed) {
+        RandomSeed();
+    }
     std::vector<uint8_t> ret(len);
     if (len > 0) {
         rng.Output(&ret[0], len);
@@ -478,6 +529,24 @@ FastRandomContext::FastRandomContext(bool fDeterministic)
     rng.SetKey(seed.begin(), 32);
 }
 
+FastRandomContext &FastRandomContext::
+operator=(FastRandomContext &&from) noexcept {
+    requires_seed = from.requires_seed;
+    rng = from.rng;
+    std::copy(std::begin(from.bytebuf), std::end(from.bytebuf),
+              std::begin(bytebuf));
+    bytebuf_size = from.bytebuf_size;
+    bitbuf = from.bitbuf;
+    bitbuf_size = from.bitbuf_size;
+    from.requires_seed = true;
+    from.bytebuf_size = 0;
+    from.bitbuf_size = 0;
+    return *this;
+}
+
 void RandomInit() {
-    RDRandInit();
+    // Invoke RNG code to trigger initialization (if not already performed)
+    GetRNGState();
+
+    ReportHardwareRand();
 }

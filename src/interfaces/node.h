@@ -7,7 +7,6 @@
 
 #include <addrdb.h>     // For banmap_t
 #include <amount.h>     // For Amount
-#include <init.h>       // For HelpMessageMode
 #include <net.h>        // For CConnman::NumConnections
 #include <netaddress.h> // For Network
 
@@ -19,6 +18,7 @@
 #include <tuple>
 #include <vector>
 
+class BanMan;
 class CCoinControl;
 class CFeeRate;
 struct CNodeStateStats;
@@ -32,7 +32,6 @@ class RPCTimerInterface;
 class UniValue;
 
 namespace interfaces {
-
 class Handler;
 class Wallet;
 
@@ -42,7 +41,8 @@ public:
     virtual ~Node() {}
 
     //! Set command line arguments.
-    virtual void parseParameters(int argc, const char *const argv[]) = 0;
+    virtual bool parseParameters(int argc, const char *const argv[],
+                                 std::string &error) = 0;
 
     //! Set a command line argument if it doesn't already have a value
     virtual bool softSetArg(const std::string &arg,
@@ -52,7 +52,7 @@ public:
     virtual bool softSetBoolArg(const std::string &arg, bool value) = 0;
 
     //! Load settings from configuration file.
-    virtual void readConfigFile(const std::string &conf_path) = 0;
+    virtual bool readConfigFiles(std::string &error) = 0;
 
     //! Choose network parameters.
     virtual void selectParams(const std::string &network) = 0;
@@ -70,11 +70,11 @@ public:
     virtual std::string getWarnings(const std::string &type) = 0;
 
     //! Initialize app dependencies.
-    virtual bool baseInitialize(Config &config, RPCServer &rpcServer) = 0;
+    virtual bool baseInitialize(Config &config) = 0;
 
     //! Start node.
     virtual bool
-    appInitMain(Config &config,
+    appInitMain(Config &config, RPCServer &rpcServer,
                 HTTPRPCRequestProcessor &httpRPCRequestProcessor) = 0;
 
     //! Stop node.
@@ -86,8 +86,8 @@ public:
     //! Return whether shutdown was requested.
     virtual bool shutdownRequested() = 0;
 
-    //! Get help message string.
-    virtual std::string helpMessage(HelpMessageMode mode) = 0;
+    //! Setup arguments
+    virtual void setupServerArgs() = 0;
 
     //! Map port.
     virtual void mapPort(bool use_upnp) = 0;
@@ -113,7 +113,10 @@ public:
     //! Unban node.
     virtual bool unban(const CSubNet &ip) = 0;
 
-    //! Disconnect node.
+    //! Disconnect node by address.
+    virtual bool disconnect(const CNetAddr &net_addr) = 0;
+
+    //! Disconnect node by id.
     virtual bool disconnect(NodeId id) = 0;
 
     //! Get total bytes recv.
@@ -155,13 +158,6 @@ public:
     //! Get network active.
     virtual bool getNetworkActive() = 0;
 
-    //! Get minimum fee.
-    virtual Amount getMinimumFee(unsigned int tx_bytes) = 0;
-
-    //! Get minimum fee with coin control.
-    virtual Amount getMinimumFee(unsigned int tx_bytes,
-                                 const CCoinControl &coin_control) = 0;
-
     //! Get max tx fee.
     virtual Amount getMaxTxFee() = 0;
 
@@ -170,15 +166,6 @@ public:
 
     //! Get dust relay fee.
     virtual CFeeRate getDustRelayFee() = 0;
-
-    //! Get fallback fee.
-    virtual CFeeRate getFallbackFee() = 0;
-
-    //! Get pay tx fee.
-    virtual CFeeRate getPayTxFee() = 0;
-
-    //! Set pay tx fee.
-    virtual void setPayTxFee(CFeeRate rate) = 0;
 
     //! Execute rpc command.
     virtual UniValue executeRpc(Config &config, const std::string &command,

@@ -6,15 +6,14 @@
 #ifndef BITCOIN_UI_INTERFACE_H
 #define BITCOIN_UI_INTERFACE_H
 
-#include <cstdint>
-#include <string>
-
 #include <boost/signals2/last_value.hpp>
 #include <boost/signals2/signal.hpp>
 
-class CBasicKeyStore;
+#include <cstdint>
+#include <memory>
+#include <string>
+
 class CWallet;
-class uint256;
 class CBlockIndex;
 
 /** General change type (added, updated, removed). */
@@ -109,7 +108,7 @@ public:
     boost::signals2::signal<void()> NotifyAlertChanged;
 
     /** A wallet has been loaded. */
-    boost::signals2::signal<void(CWallet *wallet)> LoadWallet;
+    boost::signals2::signal<void(std::shared_ptr<CWallet> wallet)> LoadWallet;
 
     /**
      * Show progress e.g. for verifychain.

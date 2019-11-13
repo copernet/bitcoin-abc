@@ -7,9 +7,9 @@
 
 #include <random.h>
 #include <tinyformat.h>
-#include <util.h>
-#include <utilstrencodings.h>
-#include <utiltime.h>
+#include <util/strencodings.h>
+#include <util/system.h>
+#include <util/time.h>
 #include <version.h>
 
 #include <cstdint>
@@ -66,12 +66,13 @@ static const std::string COOKIEAUTH_USER = "__cookie__";
 /** Default name for auth cookie file */
 static const std::string COOKIEAUTH_FILE = ".cookie";
 
-fs::path GetAuthCookieFile() {
-    fs::path path(gArgs.GetArg("-rpccookiefile", COOKIEAUTH_FILE));
-    if (!path.is_complete()) {
-        path = GetDataDir() / path;
+/** Get name of RPC authentication cookie file */
+static fs::path GetAuthCookieFile(bool temp = false) {
+    std::string arg = gArgs.GetArg("-rpccookiefile", COOKIEAUTH_FILE);
+    if (temp) {
+        arg += ".tmp";
     }
-    return path;
+    return AbsPathForConfigVal(fs::path(arg));
 }
 
 bool GenerateAuthCookie(std::string *cookie_out) {
@@ -85,15 +86,22 @@ bool GenerateAuthCookie(std::string *cookie_out) {
      * these are set to 077 in init.cpp unless overridden with -sysperms.
      */
     std::ofstream file;
-    fs::path filepath = GetAuthCookieFile();
-    file.open(filepath.string().c_str());
+    fs::path filepath_tmp = GetAuthCookieFile(true);
+    file.open(filepath_tmp.string().c_str());
     if (!file.is_open()) {
         LogPrintf("Unable to open cookie authentication file %s for writing\n",
-                  filepath.string());
+                  filepath_tmp.string());
         return false;
     }
     file << cookie;
     file.close();
+
+    fs::path filepath = GetAuthCookieFile(false);
+    if (!RenameOver(filepath_tmp, filepath)) {
+        LogPrintf("Unable to rename cookie authentication file %s to %s\n",
+                  filepath_tmp.string(), filepath.string());
+        return false;
+    }
     LogPrintf("Generated RPC authentication cookie %s\n", filepath.string());
 
     if (cookie_out) {

@@ -55,7 +55,8 @@ private:
                   const std::vector<uint8_t> &vDataToHash) const;
 
     // Private constructor for CRollingBloomFilter, no restrictions on size
-    CBloomFilter(uint32_t nElements, double nFPRate, uint32_t nTweak);
+    CBloomFilter(const uint32_t nElements, const double nFPRate,
+                 const uint32_t nTweak);
     friend class CRollingBloomFilter;
 
 public:
@@ -70,8 +71,8 @@ public:
      * always be a random value (and is largely only exposed for unit testing)
      * nFlags should be one of the BLOOM_UPDATE_* enums (not _MASK)
      */
-    CBloomFilter(uint32_t nElements, double nFPRate, uint32_t nTweak,
-                 uint8_t nFlagsIn);
+    CBloomFilter(const uint32_t nElements, const double nFPRate,
+                 const uint32_t nTweak, uint8_t nFlagsIn);
     CBloomFilter()
         : isFull(true), isEmpty(false), nHashFuncs(0), nTweak(0), nFlags(0) {}
 
@@ -94,16 +95,28 @@ public:
     bool contains(const uint256 &hash) const;
 
     void clear();
-    void reset(uint32_t nNewTweak);
+    void reset(const uint32_t nNewTweak);
 
     //! True if the size is <= MAX_BLOOM_FILTER_SIZE and the number of hash
     //! functions is <= MAX_HASH_FUNCS (catch a filter which was just
     //! deserialized which was too big)
     bool IsWithinSizeConstraints() const;
 
+    //! Scans output scripts for matches and adds those outpoints to the filter
+    //! for spend detection. Returns true if any output matched, or the txid
+    //! matches.
+    bool MatchAndInsertOutputs(const CTransaction &tx);
+
+    //! Scan inputs to see if the spent outpoints are a match, or the input
+    //! scripts contain matching elements.
+    bool MatchInputs(const CTransaction &tx);
+
+    //! Check if the transaction is relevant for any reason.
     //! Also adds any outputs which match the filter to the filter (to match
     //! their spending txes)
-    bool IsRelevantAndUpdate(const CTransaction &tx);
+    bool IsRelevantAndUpdate(const CTransaction &tx) {
+        return MatchAndInsertOutputs(tx) || MatchInputs(tx);
+    }
 
     //! Checks for empty and full filters to avoid wasting cpu
     void UpdateEmptyFull();
@@ -128,7 +141,7 @@ public:
     // A random bloom filter calls GetRand() at creation time. Don't create
     // global CRollingBloomFilter objects, as they may be constructed before the
     // randomizer is properly initialized.
-    CRollingBloomFilter(uint32_t nElements, double nFPRate);
+    CRollingBloomFilter(const uint32_t nElements, const double nFPRate);
 
     void insert(const std::vector<uint8_t> &vKey);
     void insert(const uint256 &hash);

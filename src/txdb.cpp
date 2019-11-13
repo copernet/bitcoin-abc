@@ -5,6 +5,7 @@
 
 #include <txdb.h>
 
+#include <chain.h>
 #include <chainparams.h>
 #include <hash.h>
 #include <init.h>
@@ -12,16 +13,15 @@
 #include <random.h>
 #include <ui_interface.h>
 #include <uint256.h>
-#include <util.h>
+#include <util/system.h>
 
-#include <boost/thread.hpp>
+#include <boost/thread.hpp> // boost::this_thread::interruption_point() (mingw)
 
 #include <cstdint>
 
 static const char DB_COIN = 'C';
 static const char DB_COINS = 'c';
 static const char DB_BLOCK_FILES = 'f';
-static const char DB_TXINDEX = 't';
 static const char DB_BLOCK_INDEX = 'b';
 
 static const char DB_BEST_BLOCK = 'B';
@@ -46,7 +46,7 @@ struct CoinEntry {
 
     template <typename Stream> void Unserialize(Stream &s) {
         s >> key;
-        uint256 id;
+        TxId id;
         s >> id;
         uint32_t n = 0;
         s >> VARINT(n);
@@ -153,8 +153,10 @@ size_t CCoinsViewDB::EstimateSize() const {
 }
 
 CBlockTreeDB::CBlockTreeDB(size_t nCacheSize, bool fMemory, bool fWipe)
-    : CDBWrapper(GetDataDir() / "blocks" / "index", nCacheSize, fMemory,
-                 fWipe) {}
+    : CDBWrapper(gArgs.IsArgSet("-blocksdir")
+                     ? GetDataDir() / "blocks" / "index"
+                     : GetBlocksDir() / "index",
+                 nCacheSize, fMemory, fWipe) {}
 
 bool CBlockTreeDB::ReadBlockFileInfo(int nFile, CBlockFileInfo &info) {
     return Read(std::make_pair(DB_BLOCK_FILES, nFile), info);
@@ -167,9 +169,8 @@ bool CBlockTreeDB::WriteReindexing(bool fReindexing) {
         return Erase(DB_REINDEX_FLAG);
 }
 
-bool CBlockTreeDB::ReadReindexing(bool &fReindexing) {
+void CBlockTreeDB::ReadReindexing(bool &fReindexing) {
     fReindexing = Exists(DB_REINDEX_FLAG);
-    return true;
 }
 
 bool CBlockTreeDB::ReadLastBlockFile(int &nFile) {
@@ -249,20 +250,6 @@ bool CBlockTreeDB::WriteBatchSync(
     return WriteBatch(batch, true);
 }
 
-bool CBlockTreeDB::ReadTxIndex(const uint256 &txid, CDiskTxPos &pos) {
-    return Read(std::make_pair(DB_TXINDEX, txid), pos);
-}
-
-bool CBlockTreeDB::WriteTxIndex(
-    const std::vector<std::pair<uint256, CDiskTxPos>> &vect) {
-    CDBBatch batch(*this);
-    for (std::vector<std::pair<uint256, CDiskTxPos>>::const_iterator it =
-             vect.begin();
-         it != vect.end(); it++)
-        batch.Write(std::make_pair(DB_TXINDEX, it->first), it->second);
-    return WriteBatch(batch);
-}
-
 bool CBlockTreeDB::WriteFlag(const std::string &name, bool fValue) {
     return Write(std::make_pair(DB_FLAG, name), fValue ? '1' : '0');
 }
@@ -275,7 +262,7 @@ bool CBlockTreeDB::ReadFlag(const std::string &name, bool &fValue) {
 }
 
 bool CBlockTreeDB::LoadBlockIndexGuts(
-    const Config &config,
+    const Consensus::Params &params,
     std::function<CBlockIndex *(const uint256 &)> insertBlockIndex) {
 
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
@@ -292,7 +279,7 @@ bool CBlockTreeDB::LoadBlockIndexGuts(
 
         CDiskBlockIndex diskindex;
         if (!pcursor->GetValue(diskindex)) {
-            return error("LoadBlockIndex() : failed to read value");
+            return error("%s : failed to read value", __func__);
         }
 
         // Construct block index object
@@ -311,8 +298,8 @@ bool CBlockTreeDB::LoadBlockIndexGuts(
         pindexNew->nTx = diskindex.nTx;
 
         if (!CheckProofOfWork(pindexNew->GetBlockHash(), pindexNew->nBits,
-                              config)) {
-            return error("LoadBlockIndex(): CheckProofOfWork failed: %s",
+                              params)) {
+            return error("%s: CheckProofOfWork failed: %s", __func__,
                          pindexNew->ToString());
         }
 
@@ -342,7 +329,7 @@ public:
     template <typename Stream> void Unserialize(Stream &s) {
         uint32_t nCode = 0;
         // version
-        int nVersionDummy;
+        unsigned int nVersionDummy;
         ::Unserialize(s, VARINT(nVersionDummy));
         // header code
         ::Unserialize(s, VARINT(nCode));
@@ -367,11 +354,11 @@ public:
         vout.assign(vAvail.size(), CTxOut());
         for (size_t i = 0; i < vAvail.size(); i++) {
             if (vAvail[i]) {
-                ::Unserialize(s, REF(CTxOutCompressor(vout[i])));
+                ::Unserialize(s, CTxOutCompressor(vout[i]));
             }
         }
         // coinbase height
-        ::Unserialize(s, VARINT(nHeight));
+        ::Unserialize(s, VARINT(nHeight, VarIntMode::NONNEGATIVE_SIGNED));
     }
 };
 } // namespace
@@ -390,7 +377,7 @@ bool CCoinsViewDB::Upgrade() {
 
     int64_t count = 0;
     LogPrintf("Upgrading utxo-set database...\n");
-    LogPrintf("[0%%]...");
+    LogPrintfToBeContinued("[0%%]...");
     uiInterface.ShowProgress(_("Upgrading UTXO database"), 0, true);
     size_t batch_size = 1 << 24;
     CDBBatch batch(db);
@@ -415,7 +402,7 @@ bool CCoinsViewDB::Upgrade() {
                                      percentageDone, true);
             if (reportDone < percentageDone / 10) {
                 // report max. every 10% step
-                LogPrintf("[%d%%]...", percentageDone);
+                LogPrintfToBeContinued("[%d%%]...", percentageDone);
                 reportDone = percentageDone / 10;
             }
         }

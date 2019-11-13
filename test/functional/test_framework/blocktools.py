@@ -10,7 +10,6 @@ from .script import (
     OP_DUP,
     OP_EQUALVERIFY,
     OP_HASH160,
-    OP_PUSHDATA2,
     OP_RETURN,
     OP_TRUE,
 )
@@ -48,7 +47,6 @@ def create_block(hashprev, coinbase, nTime=None):
 
 def make_conform_to_ctor(block):
     for tx in block.vtx:
-        pad_tx(tx)
         tx.rehash()
     block.vtx = [block.vtx[0]] + \
         sorted(block.vtx[1:], key=lambda tx: tx.get_id())
@@ -100,7 +98,7 @@ def create_coinbase(height, pubkey=None):
 
 def create_transaction(prevtx, n, sig, value, scriptPubKey=CScript()):
     tx = CTransaction()
-    assert(n < len(prevtx.vout))
+    assert n < len(prevtx.vout)
     tx.vin.append(CTxIn(COutPoint(prevtx.sha256, n), sig, 0xffffffff))
     tx.vout.append(CTxOut(value, scriptPubKey))
     pad_tx(tx)
@@ -160,7 +158,7 @@ def create_confirmed_utxos(node, count, age=101):
         node.generate(1)
 
     utxos = node.listunspent()
-    assert(len(utxos) >= count)
+    assert len(utxos) >= count
     return utxos
 
 
@@ -179,7 +177,7 @@ def mine_big_block(node, utxos=None):
 def send_big_transactions(node, utxos, num, fee_multiplier):
     from .cashaddr import decode
     txids = []
-    padding = "1"*(512*127)
+    padding = "1"*512
     addrHash = decode(node.getnewaddress())[2]
 
     for _ in range(num):
@@ -187,13 +185,14 @@ def send_big_transactions(node, utxos, num, fee_multiplier):
         utxo = utxos.pop()
         txid = int(utxo['txid'], 16)
         ctx.vin.append(CTxIn(COutPoint(txid, int(utxo["vout"])), b""))
-        ctx.vout.append(CTxOut(0, CScript(
-            [OP_RETURN, OP_PUSHDATA2, len(padding), bytes(padding, 'utf-8')])))
         ctx.vout.append(
             CTxOut(int(satoshi_round(utxo['amount']*COIN)),
                    CScript([OP_DUP, OP_HASH160, addrHash, OP_EQUALVERIFY, OP_CHECKSIG])))
+        for i in range(0, 127):
+            ctx.vout.append(CTxOut(0, CScript(
+                [OP_RETURN, bytes(padding, 'utf-8')])))
         # Create a proper fee for the transaction to be mined
-        ctx.vout[1].nValue -= int(fee_multiplier * node.calculate_fee(ctx))
+        ctx.vout[0].nValue -= int(fee_multiplier * node.calculate_fee(ctx))
         signresult = node.signrawtransactionwithwallet(
             ToHex(ctx), None, "NONE|FORKID")
         txid = node.sendrawtransaction(signresult["hex"], True)

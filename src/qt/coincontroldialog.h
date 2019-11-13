@@ -5,7 +5,7 @@
 #ifndef BITCOIN_QT_COINCONTROLDIALOG_H
 #define BITCOIN_QT_COINCONTROLDIALOG_H
 
-#include "amount.h"
+#include <amount.h>
 
 #include <QAbstractButton>
 #include <QAction>
@@ -20,7 +20,7 @@ class PlatformStyle;
 class WalletModel;
 
 class CCoinControl;
-class CTxMemPool;
+class COutPoint;
 
 namespace Ui {
 class CoinControlDialog;
@@ -80,10 +80,12 @@ private:
         COLUMN_ADDRESS,
         COLUMN_DATE,
         COLUMN_CONFIRMATIONS,
-        COLUMN_TXHASH,
+        COLUMN_TXID,
         COLUMN_VOUT_INDEX,
     };
     friend class CCoinControlWidgetItem;
+
+    static COutPoint buildOutPoint(const QTreeWidgetItem *item);
 
 private Q_SLOTS:
     void showMenu(const QPoint &);

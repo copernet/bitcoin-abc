@@ -2,12 +2,14 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "qvaluecombobox.h"
+#include <qt/qvaluecombobox.h>
 
 QValueComboBox::QValueComboBox(QWidget *parent)
     : QComboBox(parent), role(Qt::UserRole) {
-    connect(this, SIGNAL(currentIndexChanged(int)), this,
-            SLOT(handleSelectionChanged(int)));
+    connect(
+        this,
+        static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+        this, &QValueComboBox::handleSelectionChanged);
 }
 
 QVariant QValueComboBox::value() const {

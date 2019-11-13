@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2016 The Bitcoin Core developers
+# Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 """Test RPCs related to blockchainstate.
 
 Test the following RPCs:
+    - getblockchaininfo
     - gettxoutsetinfo
     - getdifficulty
     - getbestblockhash
@@ -32,6 +33,16 @@ from test_framework.util import (
     assert_is_hash_string,
     assert_is_hex_string,
 )
+from test_framework.blocktools import (
+    create_block,
+    create_coinbase,
+)
+from test_framework.messages import (
+    msg_block,
+)
+from test_framework.mininode import (
+    P2PInterface,
+)
 
 
 class BlockchainTest(BitcoinTestFramework):
@@ -49,6 +60,7 @@ class BlockchainTest(BitcoinTestFramework):
         self._test_getnetworkhashps()
         self._test_stopatheight()
         self._test_getblock()
+        self._test_waitforblockheight()
         assert self.nodes[0].verifychain(4, 0)
 
     def _test_getblockchaininfo(self):
@@ -61,10 +73,10 @@ class BlockchainTest(BitcoinTestFramework):
             'chainwork',
             'difficulty',
             'headers',
+            'initialblockdownload',
             'mediantime',
             'pruned',
             'size_on_disk',
-            'softforks',
             'verificationprogress',
             'warnings',
         ]
@@ -157,9 +169,9 @@ class BlockchainTest(BitcoinTestFramework):
         assert_equal(chaintxstats['txcount'], 2)
         assert_equal(chaintxstats['window_final_block_hash'], b1_hash)
         assert_equal(chaintxstats['window_block_count'], 0)
-        assert('window_tx_count' not in chaintxstats)
-        assert('window_interval' not in chaintxstats)
-        assert('txrate' not in chaintxstats)
+        assert 'window_tx_count' not in chaintxstats
+        assert 'window_interval' not in chaintxstats
+        assert 'txrate' not in chaintxstats
 
     def _test_gettxoutsetinfo(self):
         node = self.nodes[0]
@@ -291,6 +303,45 @@ class BlockchainTest(BitcoinTestFramework):
             getblockinfo['previousblockhash'], getblockheaderinfo['previousblockhash'])
         assert_equal(
             getblockinfo['nextblockhash'], getblockheaderinfo['nextblockhash'])
+
+    def _test_waitforblockheight(self):
+        self.log.info("Test waitforblockheight")
+        node = self.nodes[0]
+        node.add_p2p_connection(P2PInterface())
+
+        current_height = node.getblock(node.getbestblockhash())['height']
+
+        # Create a fork somewhere below our current height, invalidate the tip
+        # of that fork, and then ensure that waitforblockheight still
+        # works as expected.
+        #
+        # (Previously this was broken based on setting
+        # `rpc/blockchain.cpp:latestblock` incorrectly.)
+        #
+        b20hash = node.getblockhash(20)
+        b20 = node.getblock(b20hash)
+
+        def solve_and_send_block(prevhash, height, time):
+            b = create_block(prevhash, create_coinbase(height), time)
+            b.solve()
+            node.p2p.send_message(msg_block(b))
+            node.p2p.sync_with_ping()
+            return b
+
+        b21f = solve_and_send_block(int(b20hash, 16), 21, b20['time'] + 1)
+        b22f = solve_and_send_block(b21f.sha256, 22, b21f.nTime + 1)
+
+        node.invalidateblock(b22f.hash)
+
+        def assert_waitforheight(height, timeout=2):
+            assert_equal(
+                node.waitforblockheight(height, timeout)['height'],
+                current_height)
+
+        assert_waitforheight(0)
+        assert_waitforheight(current_height - 1)
+        assert_waitforheight(current_height)
+        assert_waitforheight(current_height + 1)
 
 
 if __name__ == '__main__':

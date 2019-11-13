@@ -3,8 +3,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_RPCPROTOCOL_H
-#define BITCOIN_RPCPROTOCOL_H
+#ifndef BITCOIN_RPC_PROTOCOL_H
+#define BITCOIN_RPC_PROTOCOL_H
 
 #include <fs.h>
 
@@ -38,7 +38,7 @@ enum RPCErrorCode {
     RPC_METHOD_NOT_FOUND = -32601,
     RPC_INVALID_PARAMS = -32602,
     // RPC_INTERNAL_ERROR should only be used for genuine errors in bitcoind
-    // (for exampled datadir corruption).
+    // (for example datadir corruption).
     RPC_INTERNAL_ERROR = -32603,
     RPC_PARSE_ERROR = -32700,
 
@@ -132,8 +132,6 @@ std::string JSONRPCReply(const UniValue &result, const UniValue &error,
                          const UniValue &id);
 UniValue JSONRPCError(int code, const std::string &message);
 
-/** Get name of RPC authentication cookie file */
-fs::path GetAuthCookieFile();
 /** Generate a new RPC authentication cookie and write it to disk */
 bool GenerateAuthCookie(std::string *cookie_out);
 /** Read the RPC authentication cookie from disk */
@@ -143,4 +141,4 @@ void DeleteAuthCookie();
 /** Parse JSON-RPC batch reply into a vector */
 std::vector<UniValue> JSONRPCProcessBatchReply(const UniValue &in, size_t num);
 
-#endif // BITCOIN_RPCPROTOCOL_H
+#endif // BITCOIN_RPC_PROTOCOL_H

@@ -5,7 +5,7 @@
 #ifndef BITCOIN_QT_RECEIVECOINSDIALOG_H
 #define BITCOIN_QT_RECEIVECOINSDIALOG_H
 
-#include "guiutil.h"
+#include <qt/guiutil.h>
 
 #include <QDialog>
 #include <QHeaderView>
@@ -15,8 +15,6 @@
 #include <QPoint>
 #include <QVariant>
 
-class Config;
-class OptionsModel;
 class PlatformStyle;
 class WalletModel;
 
@@ -41,7 +39,7 @@ public:
     };
 
     explicit ReceiveCoinsDialog(const PlatformStyle *platformStyle,
-                                const Config *configIn, QWidget *parent = 0);
+                                QWidget *parent = 0);
     ~ReceiveCoinsDialog();
 
     void setModel(WalletModel *model);
@@ -60,7 +58,6 @@ private:
     WalletModel *model;
     QMenu *contextMenu;
     const PlatformStyle *platformStyle;
-    const Config *config;
 
     QModelIndex selectedRow();
     void copyColumnToClipboard(int column);

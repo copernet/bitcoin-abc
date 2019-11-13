@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2015-2016 The Bitcoin Core developers
+# Copyright (c) 2015-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test BIP66 (DER SIG).
@@ -8,10 +8,9 @@ Test that the DERSIG soft-fork activates at (regtest) height 1251.
 """
 
 from test_framework.blocktools import create_block, create_coinbase
-from test_framework.messages import CTransaction, FromHex, msg_block
+from test_framework.messages import CTransaction, FromHex, msg_block, ToHex
 from test_framework.mininode import (
     mininode_lock,
-    network_thread_start,
     P2PInterface,
 )
 from test_framework.script import CScript
@@ -56,17 +55,11 @@ def create_transaction(node, coinbase, to_address, amount):
 class BIP66Test(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
-        self.extra_args = [
-            ['-promiscuousmempoolflags=1', '-whitelist=127.0.0.1']]
+        self.extra_args = [['-whitelist=127.0.0.1', '-enablebip61']]
         self.setup_clean_chain = True
 
     def run_test(self):
         self.nodes[0].add_p2p_connection(P2PInterface())
-
-        network_thread_start()
-
-        # wait_for_verack ensures that the P2P connection is fully up.
-        self.nodes[0].p2p.wait_for_verack()
 
         self.log.info("Mining {} blocks".format(DERSIG_HEIGHT - 1))
         self.coinbase_blocks = self.nodes[0].generate(DERSIG_HEIGHT - 1)
@@ -80,19 +73,11 @@ class BIP66Test(BitcoinTestFramework):
         block.nVersion = 2
         block.rehash()
         block.solve()
-        self.nodes[0].p2p.send_and_ping(msg_block(block))
-        assert_equal(self.nodes[0].getbestblockhash(), tip)
 
-        wait_until(lambda: "reject" in self.nodes[0].p2p.last_message.keys(),
-                   lock=mininode_lock)
-        with mininode_lock:
-            assert_equal(
-                self.nodes[0].p2p.last_message["reject"].code, REJECT_OBSOLETE)
-            assert_equal(
-                self.nodes[0].p2p.last_message["reject"].reason, b'bad-version(0x00000002)')
-            assert_equal(
-                self.nodes[0].p2p.last_message["reject"].data, block.sha256)
-            del self.nodes[0].p2p.last_message["reject"]
+        with self.nodes[0].assert_debug_log(expected_msgs=['{}, bad-version(0x00000002)'.format(block.hash)]):
+            self.nodes[0].p2p.send_and_ping(msg_block(block))
+            assert_equal(self.nodes[0].getbestblockhash(), tip)
+            self.nodes[0].p2p.sync_with_ping()
 
         self.log.info(
             "Test that transactions with non-DER signatures cannot appear in a block")
@@ -103,33 +88,34 @@ class BIP66Test(BitcoinTestFramework):
         unDERify(spendtx)
         spendtx.rehash()
 
-        # Now we verify that a block with this transaction is invalid.
+        # First we show that this tx is valid except for DERSIG by getting it
+        # rejected from the mempool for exactly that reason.
+        assert_equal(
+            [{'txid': spendtx.hash, 'allowed': False,
+                'reject-reason': '16: mandatory-script-verify-flag-failed (Non-canonical DER signature)'}],
+            self.nodes[0].testmempoolaccept(
+                rawtxs=[ToHex(spendtx)], allowhighfees=True)
+        )
+
+        # Now we verify that a block with this transaction is also invalid.
         block.vtx.append(spendtx)
         block.hashMerkleRoot = block.calc_merkle_root()
         block.rehash()
         block.solve()
 
-        self.nodes[0].p2p.send_and_ping(msg_block(block))
-        assert_equal(self.nodes[0].getbestblockhash(), tip)
+        with self.nodes[0].assert_debug_log(expected_msgs=['ConnectBlock {} failed (blk-bad-inputs'.format(block.hash)]):
+            self.nodes[0].p2p.send_and_ping(msg_block(block))
+            assert_equal(self.nodes[0].getbestblockhash(), tip)
+            self.nodes[0].p2p.sync_with_ping()
 
         wait_until(lambda: "reject" in self.nodes[0].p2p.last_message.keys(),
                    lock=mininode_lock)
         with mininode_lock:
-            # We can receive different reject messages depending on whether
-            # bitcoind is running with multiple script check threads. If script
-            # check threads are not in use, then transaction script validation
-            # happens sequentially, and bitcoind produces more specific reject
-            # reasons.
             assert self.nodes[0].p2p.last_message["reject"].code in [
                 REJECT_INVALID, REJECT_NONSTANDARD]
             assert_equal(
                 self.nodes[0].p2p.last_message["reject"].data, block.sha256)
-            if self.nodes[0].p2p.last_message["reject"].code == REJECT_INVALID:
-                # Generic rejection when a block is invalid
-                assert_equal(
-                    self.nodes[0].p2p.last_message["reject"].reason, b'blk-bad-inputs')
-            else:
-                assert b'Non-canonical DER signature' in self.nodes[0].p2p.last_message["reject"].reason
+            assert b'blk-bad-inputs' in self.nodes[0].p2p.last_message["reject"].reason
 
         self.log.info(
             "Test that a version 3 block with a DERSIG-compliant transaction is accepted")

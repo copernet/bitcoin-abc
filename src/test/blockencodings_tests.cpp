@@ -7,7 +7,9 @@
 #include <chainparams.h>
 #include <config.h>
 #include <consensus/merkle.h>
+#include <pow.h>
 #include <random.h>
+#include <streams.h>
 
 #include <test/test_bitcoin.h>
 
@@ -20,6 +22,10 @@ struct RegtestingSetup : public TestingSetup {
 };
 
 BOOST_FIXTURE_TEST_SUITE(blockencodings_tests, RegtestingSetup)
+
+static COutPoint InsecureRandOutPoint() {
+    return COutPoint(TxId(InsecureRand256()), 0);
+}
 
 static CBlock BuildBlockTestCase() {
     CBlock block;
@@ -35,12 +41,12 @@ static CBlock BuildBlockTestCase() {
     block.hashPrevBlock = InsecureRand256();
     block.nBits = 0x207fffff;
 
-    tx.vin[0].prevout = COutPoint(InsecureRand256(), 0);
+    tx.vin[0].prevout = InsecureRandOutPoint();
     block.vtx[1] = MakeTransactionRef(tx);
 
     tx.vin.resize(10);
     for (size_t i = 0; i < tx.vin.size(); i++) {
-        tx.vin[i].prevout = COutPoint(InsecureRand256(), 0);
+        tx.vin[i].prevout = InsecureRandOutPoint();
     }
     block.vtx[2] = MakeTransactionRef(tx);
 
@@ -49,24 +55,25 @@ static CBlock BuildBlockTestCase() {
     assert(!mutated);
 
     GlobalConfig config;
-    while (!CheckProofOfWork(block.GetHash(), block.nBits, config)) {
+    const Consensus::Params &params = config.GetChainParams().GetConsensus();
+    while (!CheckProofOfWork(block.GetHash(), block.nBits, params)) {
         ++block.nNonce;
     }
 
     return block;
 }
 
-// Number of shared use_counts we expect for a tx we havent touched
-// == 2 (mempool + our copy from the GetSharedTx call)
-#define SHARED_TX_OFFSET 2
+// Number of shared use_counts we expect for a tx we haven't touched
+// (block + mempool + our copy from the GetSharedTx call)
+constexpr long SHARED_TX_OFFSET{3};
 
 BOOST_AUTO_TEST_CASE(SimpleRoundTripTest) {
     CTxMemPool pool;
     TestMemPoolEntryHelper entry;
     CBlock block(BuildBlockTestCase());
 
-    pool.addUnchecked(block.vtx[2]->GetId(), entry.FromTx(*block.vtx[2]));
-    LOCK(pool.cs);
+    LOCK2(cs_main, pool.cs);
+    pool.addUnchecked(block.vtx[2]->GetId(), entry.FromTx(block.vtx[2]));
     BOOST_CHECK_EQUAL(
         pool.mapTx.find(block.vtx[2]->GetId())->GetSharedTx().use_count(),
         SHARED_TX_OFFSET + 0);
@@ -176,8 +183,8 @@ BOOST_AUTO_TEST_CASE(NonCoinbasePreforwardRTTest) {
     TestMemPoolEntryHelper entry;
     CBlock block(BuildBlockTestCase());
 
-    pool.addUnchecked(block.vtx[2]->GetId(), entry.FromTx(*block.vtx[2]));
-    LOCK(pool.cs);
+    LOCK2(cs_main, pool.cs);
+    pool.addUnchecked(block.vtx[2]->GetId(), entry.FromTx(block.vtx[2]));
     BOOST_CHECK_EQUAL(
         pool.mapTx.find(block.vtx[2]->GetId())->GetSharedTx().use_count(),
         SHARED_TX_OFFSET + 0);
@@ -206,6 +213,7 @@ BOOST_AUTO_TEST_CASE(NonCoinbasePreforwardRTTest) {
         BOOST_CHECK(partialBlock.IsTxAvailable(1));
         BOOST_CHECK(partialBlock.IsTxAvailable(2));
 
+        // +1 because of partialBlock
         BOOST_CHECK_EQUAL(
             pool.mapTx.find(block.vtx[2]->GetId())->GetSharedTx().use_count(),
             SHARED_TX_OFFSET + 1);
@@ -227,6 +235,11 @@ BOOST_AUTO_TEST_CASE(NonCoinbasePreforwardRTTest) {
             partialBlock.FillBlock(block2, {block.vtx[1]});
             partialBlock = tmp;
         }
+
+        // +2 because of partialBlock and block2
+        BOOST_CHECK_EQUAL(
+            pool.mapTx.find(block.vtx[2]->GetId())->GetSharedTx().use_count(),
+            SHARED_TX_OFFSET + 2);
         bool mutated;
         BOOST_CHECK(block.hashMerkleRoot != BlockMerkleRoot(block2, &mutated));
 
@@ -240,17 +253,24 @@ BOOST_AUTO_TEST_CASE(NonCoinbasePreforwardRTTest) {
                           BlockMerkleRoot(block3, &mutated).ToString());
         BOOST_CHECK(!mutated);
 
+        // +3 because of partialBlock and block2 and block3
+        BOOST_CHECK_EQUAL(
+            pool.mapTx.find(block.vtx[2]->GetId())->GetSharedTx().use_count(),
+            SHARED_TX_OFFSET + 3);
+
         txhash = block.vtx[2]->GetId();
         block.vtx.clear();
         block2.vtx.clear();
         block3.vtx.clear();
 
-        // + 1 because of partialBlockCopy.
+        // + 1 because of partialBlock; -1 because of block.
         BOOST_CHECK_EQUAL(pool.mapTx.find(txhash)->GetSharedTx().use_count(),
-                          SHARED_TX_OFFSET + 1);
+                          SHARED_TX_OFFSET + 1 - 1);
     }
+
+    // -1 because of block
     BOOST_CHECK_EQUAL(pool.mapTx.find(txhash)->GetSharedTx().use_count(),
-                      SHARED_TX_OFFSET + 0);
+                      SHARED_TX_OFFSET - 1);
 }
 
 BOOST_AUTO_TEST_CASE(SufficientPreforwardRTTest) {
@@ -258,8 +278,8 @@ BOOST_AUTO_TEST_CASE(SufficientPreforwardRTTest) {
     TestMemPoolEntryHelper entry;
     CBlock block(BuildBlockTestCase());
 
-    pool.addUnchecked(block.vtx[1]->GetId(), entry.FromTx(*block.vtx[1]));
-    LOCK(pool.cs);
+    LOCK2(cs_main, pool.cs);
+    pool.addUnchecked(block.vtx[1]->GetId(), entry.FromTx(block.vtx[1]));
     BOOST_CHECK_EQUAL(
         pool.mapTx.find(block.vtx[1]->GetId())->GetSharedTx().use_count(),
         SHARED_TX_OFFSET + 0);
@@ -307,12 +327,14 @@ BOOST_AUTO_TEST_CASE(SufficientPreforwardRTTest) {
         block.vtx.clear();
         block2.vtx.clear();
 
-        // + 1 because of partialBlockCopy.
+        // + 1 because of partialBlock; -1 because of block.
         BOOST_CHECK_EQUAL(pool.mapTx.find(txhash)->GetSharedTx().use_count(),
-                          SHARED_TX_OFFSET + 1);
+                          SHARED_TX_OFFSET + 1 - 1);
     }
+
+    // -1 because of block
     BOOST_CHECK_EQUAL(pool.mapTx.find(txhash)->GetSharedTx().use_count(),
-                      SHARED_TX_OFFSET + 0);
+                      SHARED_TX_OFFSET - 1);
 }
 
 BOOST_AUTO_TEST_CASE(EmptyBlockRoundTripTest) {
@@ -335,7 +357,8 @@ BOOST_AUTO_TEST_CASE(EmptyBlockRoundTripTest) {
     assert(!mutated);
 
     GlobalConfig config;
-    while (!CheckProofOfWork(block.GetHash(), block.nBits, config)) {
+    const Consensus::Params &params = config.GetChainParams().GetConsensus();
+    while (!CheckProofOfWork(block.GetHash(), block.nBits, params)) {
         ++block.nNonce;
     }
 

@@ -35,7 +35,8 @@ class QUrl;
 class QWidget;
 QT_END_NAMESPACE
 
-/** Utility functions used by the Bitcoin Qt UI.
+/**
+ * Utility functions used by the Bitcoin Qt UI.
  */
 namespace GUIUtil {
 
@@ -47,25 +48,21 @@ QString dateTimeStr(qint64 nTime);
 QFont fixedPitchFont();
 
 // Generate an invalid, but convincing address.
-std::string DummyAddress(const Config &config);
+std::string DummyAddress(const CChainParams &params);
 
-// Convert an address into the user chosen format
-QString convertToConfiguredAddressFormat(const Config &config,
-                                         const QString &addr);
+// Convert any address into cashaddr
+QString convertToCashAddr(const CChainParams &params, const QString &addr);
 
-// Set up widgets for address and amounts
+// Set up widget for address
 void setupAddressWidget(QValidatedLineEdit *widget, QWidget *parent);
-void setupAmountWidget(QLineEdit *widget, QWidget *parent);
 
-QString bitcoinURIScheme(const CChainParams &, bool useCashAddr);
-QString bitcoinURIScheme(const Config &);
 // Parse "bitcoincash:" URI into recipient object, return true on successful
 // parsing
 bool parseBitcoinURI(const QString &scheme, const QUrl &uri,
                      SendCoinsRecipient *out);
 bool parseBitcoinURI(const QString &scheme, QString uri,
                      SendCoinsRecipient *out);
-QString formatBitcoinURI(const Config &config, const SendCoinsRecipient &info);
+QString formatBitcoinURI(const SendCoinsRecipient &info);
 
 // Returns true if given address+amount meets "dust" definition
 bool isDust(interfaces::Node &node, const QString &address, const Amount amount,
@@ -146,8 +143,8 @@ bool isObscured(QWidget *w);
 // Open debug.log
 void openDebugLogfile();
 
-// Replace invalid default fonts with known good ones
-void SubstituteFonts(const QString &language);
+// Open the config file
+bool openBitcoinConf();
 
 /** Qt event filter that intercepts ToolTipChange events, and replaces the
  * tooltip with a rich text representation if needed.  This assures that Qt can
@@ -173,8 +170,8 @@ private:
  * Also makes sure the column widths are never larger than the table's viewport.
  * In Qt, all columns are resizable from the right, but it's not intuitive
  * resizing the last column from the right.
- * Usually our second to last columns behave as if stretched, and when on strech
- * mode, columns aren't resizable interactively or programmatically.
+ * Usually our second to last columns behave as if stretched, and when on
+ * stretch mode, columns aren't resizable interactively or programmatically.
  *
  * This helper object takes care of this issue.
  *
@@ -261,20 +258,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
 };
 
-#if defined(Q_OS_MAC)
-// workaround for Qt OSX Bug:
-// https://bugreports.qt-project.org/browse/QTBUG-15631
-// QProgressBar uses around 10% CPU even when app is in background
-class ProgressBar : public ClickableProgressBar {
-    bool event(QEvent *e) override {
-        return (e->type() != QEvent::StyleAnimationUpdate)
-                   ? QProgressBar::event(e)
-                   : false;
-    }
-};
-#else
 typedef ClickableProgressBar ProgressBar;
-#endif
 
 } // namespace GUIUtil
 

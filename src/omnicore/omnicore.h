@@ -5,6 +5,7 @@
 #include "omnicore/persistence.h"
 #include "omnicore/tally.h"
 #include "script/standard.h"
+#include "util/system.h"
 
 #include "sync.h"
 #include "uint256.h"

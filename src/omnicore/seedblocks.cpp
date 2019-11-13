@@ -3,7 +3,7 @@
 #include "omnicore/log.h"
 
 #include "chainparams.h"
-#include "utiltime.h"
+#include "util/time.h"
 
 #include <boost/algorithm/string.hpp>
 #include <boost/foreach.hpp>

@@ -5,6 +5,7 @@
 #include "omnicore/rules.h"
 #include "omnicore/utilsbitcoin.h"
 #include "omnicore/version.h"
+#include "util/system.h"
 
 #include "util.h"
 #include "ui_interface.h"

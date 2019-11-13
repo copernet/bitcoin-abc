@@ -2,7 +2,7 @@
 #include "random.h"
 #include "sync.h"
 #include "test/test_bitcoin.h"
-#include "utiltime.h"
+#include "util/time.h"
 
 #include <boost/bind.hpp>
 #include <boost/test/unit_test.hpp>

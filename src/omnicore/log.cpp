@@ -2,10 +2,11 @@
 
 #include "chainparamsbase.h"
 #include "util.h"
-#include "utiltime.h"
+#include "util/time.h"
 #include "logging.h"
 #include "chainparamsbase.h"
 #include "logging.h"
+#include "util/system.h"
 
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>

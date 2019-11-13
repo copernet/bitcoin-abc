@@ -1428,8 +1428,8 @@ static bool UndoReadFromDisk(CBlockUndo &blockundo, const CBlockIndex *pindex) {
 
 } // namespace
 /** Abort with a message */
-static bool AbortNode(const std::string &strMessage,
-                      const std::string &userMessage = "") {
+bool AbortNode(const std::string &strMessage,
+                      const std::string &userMessage) {
     SetMiscWarning(strMessage);
     LogPrintf("*** %s\n", strMessage);
     uiInterface.ThreadSafeMessageBox(

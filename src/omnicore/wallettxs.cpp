@@ -18,7 +18,7 @@
 #include "txmempool.h"
 #include "cashaddrenc.h"
 #include "uint256.h"
-#include "utilstrencodings.h"
+#include "util/strencodings.h"
 #include "wallet/fees.h"
 #ifdef ENABLE_WALLET
 #include "script/ismine.h"

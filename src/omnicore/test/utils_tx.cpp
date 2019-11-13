@@ -9,7 +9,7 @@
 #include "pubkey.h"
 #include "script/script.h"
 #include "script/standard.h"
-#include "utilstrencodings.h"
+#include "util/strencodings.h"
 
 #include <stdint.h>
 

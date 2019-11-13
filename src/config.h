@@ -5,6 +5,7 @@
 #ifndef BITCOIN_CONFIG_H
 #define BITCOIN_CONFIG_H
 
+#include "chainparams.h"
 #include <amount.h>
 #include <feerate.h>
 
@@ -14,7 +15,7 @@
 #include <memory>
 #include <string>
 
-class CChainParams;
+
 
 class Config : public boost::noncopyable {
 public:

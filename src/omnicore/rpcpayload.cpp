@@ -8,7 +8,7 @@
 #include "omnicore/tx.h"
 
 #include "rpc/server.h"
-#include "utilstrencodings.h"
+#include "util/strencodings.h"
 
 #include <univalue.h>
 

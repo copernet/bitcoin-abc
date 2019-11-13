@@ -5,7 +5,7 @@
 #include "script/standard.h"
 #include "primitives/transaction.h"
 #include "serialize.h"
-#include "utilstrencodings.h"
+#include "util/strencodings.h"
 #include "config.h"
 
 #include <boost/foreach.hpp>

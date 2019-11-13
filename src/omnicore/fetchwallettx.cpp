@@ -11,6 +11,7 @@
 #include "omnicore/omnicore.h"
 #include "omnicore/pending.h"
 #include "omnicore/utilsbitcoin.h"
+#include "index/txindex.h"
 
 #include "validation.h"
 #include "init.h"

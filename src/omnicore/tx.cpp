@@ -23,7 +23,7 @@
 #include "amount.h"
 #include "base58.h"
 #include "sync.h"
-#include "utiltime.h"
+#include "util/time.h"
 #include "config.h"
 #include "cashaddrenc.h"
 

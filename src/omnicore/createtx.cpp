@@ -21,7 +21,7 @@
 
 /** Creates a new previous output entry. */
 PrevTxsEntry::PrevTxsEntry(const uint256& txid, uint32_t nOut, int64_t nValue, const CScript& scriptPubKey)
-  : outPoint(txid, nOut), txOut(Amount(nValue), scriptPubKey)
+  : outPoint(TxId(txid), nOut), txOut(Amount(nValue), scriptPubKey)
 {
 }
 
@@ -48,7 +48,7 @@ TxBuilder& TxBuilder::addInput(const COutPoint& outPoint)
 /** Adds a transaction input to the transaction. */
 TxBuilder& TxBuilder::addInput(const uint256& txid, uint32_t nOut)
 {
-    COutPoint outPoint(txid, nOut);
+    COutPoint outPoint(TxId(txid), nOut);
 
     return addInput(outPoint);
 }

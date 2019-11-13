@@ -818,9 +818,9 @@ add_executable(src
         utilmoneystr.cpp
         utilmoneystr.h
         utilstrencodings.cpp
-        utilstrencodings.h
+        util/strencodings.h
         utiltime.cpp
-        utiltime.h
+        util/time.h
         validation.cpp
         validation.h
         validationinterface.cpp

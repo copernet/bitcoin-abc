@@ -8,10 +8,11 @@ class CTransaction;
 #include "omnicore/omnicore.h"
 
 #include "uint256.h"
-#include "utilstrencodings.h"
+#include "util/strencodings.h"
 
 #include <stdint.h>
 #include <string.h>
+#include <util/system.h>
 
 #include <string.h>
 #include <string>

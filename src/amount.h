@@ -21,6 +21,10 @@ private:
 public:
     constexpr Amount() : amount(0) {}
     constexpr Amount(const Amount &_camount) : amount(_camount.amount) {}
+    template <typename T>
+    explicit constexpr Amount(T _camount) : amount(_camount) {
+        static_assert(std::is_integral<T>(), "Only integer types can be used as amounts");
+    }
 
     /**
      * Assignement operator.
@@ -37,7 +41,7 @@ public:
      * Implement standard operators
      */
     Amount &operator+=(const Amount a) {
-        amount += a.amount; f
+        amount += a.amount;
         return *this;
     }
     Amount &operator-=(const Amount a) {

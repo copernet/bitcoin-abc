@@ -8,7 +8,7 @@
 #include "omnicore/utils.h"
 
 #include "base58.h"
-#include "utilstrencodings.h"
+#include "util/strencodings.h"
 
 // TODO: use crypto/sha256 instead of openssl
 #include "openssl/sha.h"

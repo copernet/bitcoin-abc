@@ -11,6 +11,7 @@
 #include "omnicore/rules.h"
 #include "omnicore/sp.h"
 #include "omnicore/sto.h"
+#include "util/system.h"
 
 #include "leveldb/db.h"
 #include "util.h"

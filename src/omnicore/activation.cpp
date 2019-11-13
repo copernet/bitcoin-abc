@@ -14,6 +14,7 @@
 #include "util.h"
 #include "ui_interface.h"
 #include "validation.h"
+#include <util/system.h>
 
 #include <boost/filesystem.hpp>
 

@@ -10,8 +10,6 @@
 #include <util/strencodings.h>
 #include <util/system.h>
 
-typedef std::vector<uint8_t> valtype;
-
 bool fAcceptDatacarrier = DEFAULT_ACCEPT_DATACARRIER;
 
 CScriptID::CScriptID(const CScript &in)
@@ -35,7 +33,7 @@ const char *GetTxnOutputType(txnouttype t) {
     return nullptr;
 }
 
-static bool MatchPayToPubkey(const CScript &script, valtype &pubkey) {
+bool MatchPayToPubkey(const CScript &script, valtype &pubkey) {
     if (script.size() == CPubKey::PUBLIC_KEY_SIZE + 2 &&
         script[0] == CPubKey::PUBLIC_KEY_SIZE && script.back() == OP_CHECKSIG) {
         pubkey = valtype(script.begin() + 1,
@@ -53,7 +51,7 @@ static bool MatchPayToPubkey(const CScript &script, valtype &pubkey) {
     return false;
 }
 
-static bool MatchPayToPubkeyHash(const CScript &script, valtype &pubkeyhash) {
+bool MatchPayToPubkeyHash(const CScript &script, valtype &pubkeyhash) {
     if (script.size() == 25 && script[0] == OP_DUP && script[1] == OP_HASH160 &&
         script[2] == 20 && script[23] == OP_EQUALVERIFY &&
         script[24] == OP_CHECKSIG) {
@@ -68,7 +66,7 @@ static constexpr bool IsSmallInteger(opcodetype opcode) {
     return opcode >= OP_1 && opcode <= OP_16;
 }
 
-static bool MatchMultisig(const CScript &script, unsigned int &required,
+bool MatchMultisig(const CScript &script, unsigned int &required,
                           std::vector<valtype> &pubkeys) {
     opcodetype opcode;
     valtype data;

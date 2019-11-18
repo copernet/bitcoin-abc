@@ -5,6 +5,7 @@
 
 #include <wallet/fees.h>
 
+#include "validation.h"
 #include <config.h>
 #include <policy/policy.h>
 #include <txmempool.h>
@@ -12,6 +13,8 @@
 #include <validation.h>
 #include <wallet/coincontrol.h>
 #include <wallet/wallet.h>
+
+CFeeRate payTxFee(Amount::zero());
 
 Amount GetRequiredFee(const CWallet &wallet, unsigned int nTxBytes) {
     return GetRequiredFeeRate(wallet).GetFeeCeiling(nTxBytes);
@@ -54,3 +57,26 @@ CFeeRate GetMinimumFeeRate(const CWallet &wallet,
     // Prevent user from paying a fee below minRelayTxFee or minTxFee.
     return std::max(neededFeeRate, GetRequiredFeeRate(wallet));
 }
+
+
+//Amount GetMinimumFee(unsigned int nTxBytes, const CTxMemPool &pool) {
+//    Amount nFeeNeeded = payTxFee.GetFeeCeiling(nTxBytes);
+//    if (nFeeNeeded == Amount::zero()) {
+//        nFeeNeeded = pool.estimateFee().GetFeeCeiling(nTxBytes);
+//        // ... unless we don't have enough mempool data for estimatefee, then
+//        // use fallbackFee.
+//        if (nFeeNeeded == Amount::zero()) {
+//            nFeeNeeded = CWallet::fallbackFee.GetFeeCeiling(nTxBytes);
+//        }
+//    }
+//
+//    // Prevent user from paying a fee below minRelayTxFee or minTxFee.
+//    nFeeNeeded = std::max(nFeeNeeded, GetConfig().GetMinFeePerKB().GetFee(nTxBytes));
+//
+//    // But always obey the maximum.
+//    if (nFeeNeeded > maxTxFee) {
+//        nFeeNeeded = maxTxFee;
+//    }
+//
+//    return nFeeNeeded;
+//}

@@ -10,6 +10,8 @@
 #include <coins.h>
 #include <dbwrapper.h>
 #include <flatfile.h>
+#include "index/txindex.h"
+
 #include <primitives/block.h>
 
 #include <map>
@@ -44,6 +46,28 @@ static const int64_t nMaxBlockDBCache = 2;
 static const int64_t nMaxTxIndexCache = 1024;
 //! Max memory allocated to coin DB specific cache (MiB)
 static const int64_t nMaxCoinsDBCache = 8;
+
+struct CDiskTxPos : public FlatFilePos {
+    unsigned int nTxOffset; // after header
+
+    ADD_SERIALIZE_METHODS;
+
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream &s, Operation ser_action) {
+        READWRITEAS(FlatFilePos, *this);
+        READWRITE(VARINT(nTxOffset));
+    }
+
+    CDiskTxPos(const FlatFilePos &blockIn, unsigned int nTxOffsetIn)
+            : FlatFilePos(blockIn.nFile, blockIn.nPos), nTxOffset(nTxOffsetIn) {}
+
+    CDiskTxPos() { SetNull(); }
+
+    void SetNull() {
+        FlatFilePos::SetNull();
+        nTxOffset = 0;
+    }
+};
 
 /** CCoinsView backed by the coin database (chainstate/) */
 class CCoinsViewDB final : public CCoinsView {
@@ -101,6 +125,7 @@ public:
     bool ReadLastBlockFile(int &nFile);
     bool WriteReindexing(bool fReindexing);
     void ReadReindexing(bool &fReindexing);
+    bool ReadTxIndex(const uint256 &txid, CDiskTxPos &pos);
     bool WriteFlag(const std::string &name, bool fValue);
     bool ReadFlag(const std::string &name, bool &fValue);
     bool LoadBlockIndexGuts(

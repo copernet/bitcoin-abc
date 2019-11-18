@@ -3,6 +3,8 @@
 #include "omnicore/log.h"
 
 #include "util.h"
+#include "util/time.h"
+#include "util/system.h"
 
 #include "leveldb/db.h"
 #include "leveldb/write_batch.h"

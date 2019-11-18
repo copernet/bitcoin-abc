@@ -6,7 +6,7 @@
 #include <string>
 
 #ifdef HAVE_BUILD_INFO
-#    include "build.h"
+#    include "obj/build.h"
 #endif
 
 #ifdef OMNICORE_VERSION_STATUS
@@ -18,33 +18,33 @@
 //! Returns formatted Omni Core version, e.g. "1.2.0" or "1.3.4.1"
 const std::string OmniCoreVersion()
 {
-    if (WORMHOLE_VERSION_BUILD) {
-        return strprintf("%d.%d.%d.%d",
-                WORMHOLE_VERSION_MAJOR,
-                WORMHOLE_VERSION_MINOR,
-                WORMHOLE_VERSION_PATCH,
-                WORMHOLE_VERSION_BUILD);
-    } else {
+//    if (WORMHOLE_VERSION_BUILD) {
+//        return strprintf("%d.%d.%d.%d",
+//                WORMHOLE_VERSION_MAJOR,
+//                WORMHOLE_VERSION_MINOR,
+//                WORMHOLE_VERSION_PATCH,
+//                WORMHOLE_VERSION_BUILD);
+//    } else {
         return strprintf("%d.%d.%d",
                 WORMHOLE_VERSION_MAJOR,
                 WORMHOLE_VERSION_MINOR,
                 WORMHOLE_VERSION_PATCH);
-    }
+//    }
 }
 
 //! Returns formatted Bitcoin Core version, e.g. "0.10", "0.9.3"
 const std::string BitcoinCoreVersion()
 {
-    if (CLIENT_VERSION_BUILD) {
-        return strprintf("%d.%d.%d.%d",
-                CLIENT_VERSION_MAJOR,
-                CLIENT_VERSION_MINOR,
-                CLIENT_VERSION_REVISION,
-                CLIENT_VERSION_BUILD);
-    } else {
+//    if (CLIENT_VERSION_BUILD) {
+//        return strprintf("%d.%d.%d.%d",
+//                CLIENT_VERSION_MAJOR,
+//                CLIENT_VERSION_MINOR,
+//                CLIENT_VERSION_REVISION,
+//                CLIENT_VERSION_BUILD);
+//    } else {
         return strprintf("%d.%d.%d",
                 CLIENT_VERSION_MAJOR,
                 CLIENT_VERSION_MINOR,
                 CLIENT_VERSION_REVISION);
-    }
+//    }
 }

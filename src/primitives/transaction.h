@@ -27,6 +27,8 @@ private:
 public:
     COutPoint() : txid(), n(-1) {}
     COutPoint(TxId txidIn, uint32_t nIn) : txid(txidIn), n(nIn) {}
+    COutPoint(uint256 txidIn, uint32_t nIn) : txid(TxId(txidIn)), n(nIn) {}
+
 
     ADD_SERIALIZE_METHODS;
 

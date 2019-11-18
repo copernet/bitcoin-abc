@@ -14,6 +14,7 @@
 #include <ui_interface.h>
 #include <uint256.h>
 #include <util/system.h>
+#include "validation.h"
 
 #include <boost/thread.hpp> // boost::this_thread::interruption_point() (mingw)
 
@@ -160,6 +161,10 @@ CBlockTreeDB::CBlockTreeDB(size_t nCacheSize, bool fMemory, bool fWipe)
 
 bool CBlockTreeDB::ReadBlockFileInfo(int nFile, CBlockFileInfo &info) {
     return Read(std::make_pair(DB_BLOCK_FILES, nFile), info);
+}
+
+bool CBlockTreeDB::ReadTxIndex(const uint256 &txid, CDiskTxPos &pos) {
+    return Read(std::make_pair(DB_TXINDEX, txid), pos);
 }
 
 bool CBlockTreeDB::WriteReindexing(bool fReindexing) {

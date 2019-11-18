@@ -25,7 +25,7 @@
 #include "net.h"
 #include "rpc/server.h"
 #include "sync.h"
-#include "utilmoneystr.h"
+#include "util/moneystr.h"
 #include "../rpc/server.h"
 
 #ifdef ENABLE_WALLET
@@ -758,11 +758,11 @@ UniValue whc_burnbchgetwhc(const Config &config,const JSONRPCRequest &request)
 	    redeemaddress = ParseAddress(request.params[1]);
 	}
 
-    CWalletRef pwalletMain = NULL;
+    std::shared_ptr<CWallet> pwalletMain = NULL;
     CTransactionRef wtx;
 
-    if (vpwallets.size() > 0) {
-        pwalletMain = vpwallets[0];
+    if (HasWallets()) {
+        pwalletMain = GetWallets()[0];
     }
 
     bool result = createNewtransaction(pwalletMain, redeemaddress, nAmount, wtx );
@@ -889,7 +889,7 @@ UniValue whc_sendunfreeze(const Config &config,const JSONRPCRequest &request) {
     }
 }
 
-bool createNewtransaction(CWallet *const pwallet, const std::string &address,
+bool createNewtransaction(std::shared_ptr<CWallet> pwallet, const std::string &address,
                           Amount nValue, CTransactionRef &wtxNew){
     // Check amount
     if (nValue <= Amount(0)) {
@@ -925,7 +925,7 @@ bool createNewtransaction(CWallet *const pwallet, const std::string &address,
     std::vector<unsigned char> payload = CreatePayload_BurnBch();
 
     // Create and send the transaction
-    CReserveKey reservekey(pwallet);
+    CReserveKey reservekey(pwallet.get());
     Amount nFeeRequired;
     std::string strError;
     std::vector<CRecipient> vecSend;

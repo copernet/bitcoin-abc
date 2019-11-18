@@ -20,6 +20,8 @@
 #include "uint256.h"
 #include "util/strencodings.h"
 #include "wallet/fees.h"
+#include "policy/policy.h"
+
 #ifdef ENABLE_WALLET
 #include "script/ismine.h"
 #include "wallet/wallet.h"
@@ -41,9 +43,9 @@ bool AddressToPubKey(const std::string& key, CPubKey& pubKey)
     // Case 1: Bitcoin address and the key is in the wallet
 	const CChainParams params = GetConfig().GetChainParams();
 	CTxDestination address = DecodeCashAddr(key, params);
-	CWalletRef pwalletMain = NULL;
-	if (vpwallets.size() > 0){
-		pwalletMain = vpwallets[0];
+	std::shared_ptr<CWallet> pwalletMain = NULL;
+	if (HasWallets()){
+		pwalletMain = GetWallets()[0];;
 	}
 	CTxDestination comAddr = CNoDestination{};
     if (pwalletMain && address != comAddr) {
@@ -135,9 +137,9 @@ std::string GetAddressLabel(const std::string& address)
 {
     std::string addressLabel;
 #ifdef ENABLE_WALLET
-	CWalletRef pwalletMain = NULL;
-	if (vpwallets.size() > 0){
-		pwalletMain = vpwallets[0];
+	std::shared_ptr<CWallet> pwalletMain = NULL;
+	if (HasWallets()){
+		pwalletMain = GetWallets()[0];
 	}
     if (pwalletMain) {
         LOCK(pwalletMain->cs_wallet);
@@ -158,9 +160,9 @@ std::string GetAddressLabel(const std::string& address)
 int IsMyAddress(const std::string& address)
 {
 #ifdef ENABLE_WALLET
-	CWalletRef pwalletMain = NULL;
-	if (vpwallets.size() > 0){
-		pwalletMain = vpwallets[0];
+	std::shared_ptr<CWallet> pwalletMain = NULL;
+	if (HasWallets()){
+		pwalletMain = GetWallets()[0];
 	}
     if (pwalletMain) {
         // TODO: resolve deadlock caused cs_tally, cs_wallet
@@ -184,15 +186,15 @@ static int64_t GetEstimatedFeePerKb()
 {
     int64_t nFee = 50000; // 0.0005 BTC;
 
-#ifdef ENABLE_WALLET
-	CWalletRef pwalletMain = NULL;
-	if (vpwallets.size() > 0){
-		pwalletMain = vpwallets[0];
-	}
-    if (pwalletMain) {
-        nFee = GetMinimumFee(1000, g_mempool).GetSatoshis();
-    }
-#endif
+//#ifdef ENABLE_WALLET
+//	std::shared_ptr<CWallet> pwalletMain = NULL;
+//	if (HasWallets()){
+//		pwalletMain = GetWallets()[0];
+//	}
+//    if (pwalletMain) {
+//        nFee = GetMinimumFee(1000, g_mempool).GetSatoshis();
+//    }
+//#endif
 
     return nFee;
 }
@@ -207,7 +209,7 @@ static int64_t GetEstimatedFeePerKb()
 static int64_t GetEconomicThreshold(const CTxOut& txOut)
 {
     // Minimum value needed to relay the transaction
-    int64_t nThresholdDust = txOut.GetDustThreshold(GetConfig().GetMinFeePerKB()).GetSatoshis();
+    int64_t nThresholdDust = GetDustThreshold(txOut, dustRelayFee).GetSatoshis();
 
     // Use the estimated fee that is also used to contruct transactions.
     // We use the absolute minimum, so we divide by 3, to get rid of the
@@ -215,7 +217,7 @@ static int64_t GetEconomicThreshold(const CTxOut& txOut)
 	Amount feePerKb = Amount(GetEstimatedFeePerKb()); 
     CFeeRate estimatedFeeRate(feePerKb);
 
-    int64_t nThresholdFees = txOut.GetDustThreshold(estimatedFeeRate).GetSatoshis() ;
+    int64_t nThresholdFees = GetDustThreshold(txOut, dustRelayFee).GetSatoshis();
 
     return std::max(nThresholdDust, nThresholdFees);
 }
@@ -229,9 +231,9 @@ int64_t SelectCoins(const std::string& fromAddress, CCoinControl& coinControl, i
     int64_t nTotal = 0;
 
 #ifdef ENABLE_WALLET
-	CWalletRef pwalletMain = NULL;
-	if (vpwallets.size() > 0){
-		pwalletMain = vpwallets[0];
+	std::shared_ptr<CWallet> pwalletMain = NULL;
+	if (HasWallets()){
+		pwalletMain = GetWallets()[0];
 	}
     if (NULL == pwalletMain) {
         return 0;
@@ -268,7 +270,7 @@ int64_t SelectCoins(const std::string& fromAddress, CCoinControl& coinControl, i
             if (!IsMine(*pwalletMain, dest)) {
                 continue;
             }
-            if (pwalletMain->IsSpent(txid, n)) {
+            if (pwalletMain->IsSpent(COutPoint(txid, n))) {
                 continue;
             }
             if (txOut.nValue.GetSatoshis() < GetEconomicThreshold(txOut)) {

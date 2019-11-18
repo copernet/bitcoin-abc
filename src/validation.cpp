@@ -903,6 +903,14 @@ bool AcceptToMemoryPool(const Config &config, CTxMemPool &pool,
  * placed in hashBlock. If blockIndex is provided, the transaction is fetched
  * from the corresponding block.
  */
+
+bool GetTransaction(const Config &config, const TxId &txid, CTransactionRef &tx,
+                    uint256 &hashBlock, bool fAllowSlow, CBlockIndex *blockIndex){
+    Consensus::Params params = config.GetChainParams().GetConsensus();
+    return GetTransaction(params, txid, tx, hashBlock, fAllowSlow, blockIndex);
+}
+
+
 bool GetTransaction(const Consensus::Params &params, const TxId &txid,
                     CTransactionRef &txOut, uint256 &hashBlock, bool fAllowSlow,
                     CBlockIndex *blockIndex) {

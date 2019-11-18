@@ -41,4 +41,6 @@ CFeeRate GetMinimumFeeRate(const CWallet &wallet,
                            const CCoinControl &coin_control,
                            const CTxMemPool &pool);
 
+//Amount GetMinimumFee(unsigned int nTxBytes, const CTxMemPool &pool);
+
 #endif // BITCOIN_WALLET_FEES_H

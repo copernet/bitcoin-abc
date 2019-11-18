@@ -53,7 +53,8 @@ public:
 /// The global transaction index, used in GetTransaction. May be null.
 extern std::unique_ptr<TxIndex> g_txindex;
 
-//struct CDiskTxPos;
-
+constexpr char DB_BEST_BLOCK = 'B';
+constexpr char DB_TXINDEX = 't';
+constexpr char DB_TXINDEX_BLOCK = 'T';
 
 #endif // BITCOIN_INDEX_TXINDEX_H

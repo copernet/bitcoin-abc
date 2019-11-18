@@ -711,7 +711,7 @@ UniValue mscrpc(const Config &config, const JSONRPCRequest &request) {
 #ifdef ENABLE_WALLET
         case 11:
         {
-        CWalletRef pwalletMain = vpwallets[0];
+        std::shared_ptr<CWallet> pwalletMain = vpwallets[0];
             PrintToConsole("Locking pwalletMain->cs_wallet for %d milliseconds..\n", extra2);
             LOCK(pwalletMain->cs_wallet);
             MilliSleep(extra2);
@@ -1817,7 +1817,7 @@ UniValue whc_listblocktransactions(const Config &config, const JSONRPCRequest &r
         LOCK(cs_main);
         CBlockIndex *pBlockIndex = chainActive[blockHeight];
 
-        if (!ReadBlockFromDisk(block, pBlockIndex, GetConfig())) {
+        if (!ReadBlockFromDisk(block, pBlockIndex, GetConfig().GetChainParams().GetConsensus())) {
             throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to read block from disk");
         }
     }

@@ -1,4 +1,18 @@
-/Applications/CLion.app/Contents/bin/cmake/bin/cmake -DCMAKE_BUILD_TYPE=Debug -G "CodeBlocks - Unix Makefiles" /Users/bitmain/wormhole
+/Applications/CLion.app/Contents/bin/cmake/mac/bin/cmake -DCMAKE_BUILD_TYPE=Debug -G "CodeBlocks - Unix Makefiles" /Users/matrix/cetchain/wormhole
+-- Found PythonInterp: /usr/local/bin/python3 (found suitable version "3.7.5", minimum required is "3.5") 
+-- Found Git: /usr/bin/git (found version "2.20.1 (Apple Git-117)") 
 -- Configuring done
--- Generating done
--- Build files have been written to: /Users/bitmain/wormhole/cmake-build-debug
+CMake Error at src/CMakeLists.txt:46 (add_executable):
+  Cannot find source file:
+
+    bench/perf.cpp
+
+  Tried extensions .c .C .c++ .cc .cpp .cxx .cu .m .M .mm .h .hh .h++ .hm
+  .hpp .hxx .in .txx
+
+
+CMake Error at src/CMakeLists.txt:46 (add_executable):
+  No SOURCES given to target: src
+
+
+CMake Generate step failed.  Build files cannot be regenerated correctly.

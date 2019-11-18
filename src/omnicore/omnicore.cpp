@@ -1248,7 +1248,7 @@ static int msc_initial_scan(int nFirstBlock)
 
         if (!seedBlockFilterEnabled || !SkipBlock(nBlock)) {
             CBlock block;
-            if (!ReadBlockFromDisk(block, pblockindex, GetConfig())) break;
+            if (!ReadBlockFromDisk(block, pblockindex, GetConfig().GetChainParams().GetConsensus())) break;
 		    for(CTransactionRef& tx : block.vtx){
                 if (mastercore_handler_tx(*(tx.get()), nBlock, nTxNum, pblockindex)) ++nTxsFoundInBlock;
                 ++nTxNum;
@@ -2347,7 +2347,7 @@ int mastercore::WalletTxBuilder(const std::string& senderAddress, const std::str
         int64_t referenceAmount, const std::vector<unsigned char>& data, uint256& txid, std::string& rawHex, bool commit)
 {
 #ifdef ENABLE_WALLET
-	CWalletRef pwalletMain = NULL;
+    std::shared_ptr<CWallet> pwalletMain = NULL;
 	if (vpwallets.size() > 0){
 		pwalletMain = vpwallets[0];
 	}
@@ -2364,7 +2364,7 @@ int mastercore::WalletTxBuilder(const std::string& senderAddress, const std::str
     int nChangePosInOut = 1;
     std::string strFailReason;
     std::vector<std::pair<CScript, int64_t> > vecSend;
-    CReserveKey reserveKey(pwalletMain);
+    CReserveKey reserveKey(pwalletMain.get());
 
     // Next, we set the change address to the sender
 	const CChainParams& params = GetConfig().GetChainParams();

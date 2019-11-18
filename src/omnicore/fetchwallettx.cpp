@@ -64,7 +64,7 @@ std::map<std::string, uint256> FetchWalletOmniTransactions(unsigned int count, i
     std::set<uint256> seenHashes;
     std::list<CAccountingEntry> acentries;
     CWallet::TxItems txOrdered;
-	CWalletRef pwalletMain = vpwallets[0];
+	std::shared_ptr<CWallet> pwalletMain = vpwallets[0];
     {
         LOCK(pwalletMain->cs_wallet);
         txOrdered = pwalletMain->wtxOrdered;

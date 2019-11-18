@@ -17,6 +17,8 @@
 
 static const bool DEFAULT_ACCEPT_DATACARRIER = true;
 
+typedef std::vector<uint8_t> valtype;
+
 class CKeyID;
 class CScript;
 
@@ -138,5 +140,11 @@ CScript GetScriptForRawPubKey(const CPubKey &pubkey);
 
 /** Generate a multisig script. */
 CScript GetScriptForMultisig(int nRequired, const std::vector<CPubKey> &keys);
+
+bool MatchMultisig(const CScript &script, unsigned int &required, std::vector<valtype> &pubkeys);
+
+bool MatchPayToPubkeyHash(const CScript &script, valtype &pubkeyhash);
+
+bool MatchPayToPubkey(const CScript &script, valtype &pubkey);
 
 #endif // BITCOIN_SCRIPT_STANDARD_H

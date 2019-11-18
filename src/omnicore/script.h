@@ -20,5 +20,4 @@ bool GetScriptPushes(const CScript& script, std::vector<std::string>& vstrRet, b
 /** Returns public keys or hashes from scriptPubKey, for standard transaction types. */
 bool SafeSolver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::vector<unsigned char> >& vSolutionsRet);
 
-
 #endif // OMNICORE_SCRIPT_H

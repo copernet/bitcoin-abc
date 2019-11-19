@@ -2348,8 +2348,8 @@ int mastercore::WalletTxBuilder(const std::string& senderAddress, const std::str
 {
 #ifdef ENABLE_WALLET
     std::shared_ptr<CWallet> pwalletMain = NULL;
-	if (vpwallets.size() > 0){
-		pwalletMain = vpwallets[0];
+	if (HasWallets()){
+		pwalletMain = GetWallets()[0];
 	}
     if (pwalletMain == NULL) return MP_ERR_WALLET_ACCESS;
 

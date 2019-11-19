@@ -711,7 +711,7 @@ UniValue mscrpc(const Config &config, const JSONRPCRequest &request) {
 #ifdef ENABLE_WALLET
         case 11:
         {
-        std::shared_ptr<CWallet> pwalletMain = vpwallets[0];
+            std::shared_ptr<CWallet> pwalletMain = GetWallets()[0];
             PrintToConsole("Locking pwalletMain->cs_wallet for %d milliseconds..\n", extra2);
             LOCK(pwalletMain->cs_wallet);
             MilliSleep(extra2);

@@ -3,7 +3,7 @@
 
 #include "script/script.h"
 #include "test/test_bitcoin.h"
-#include "util.h"
+
 
 #include <boost/test/unit_test.hpp>
 

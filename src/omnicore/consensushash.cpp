@@ -14,7 +14,7 @@
 
 #include "arith_uint256.h"
 #include "uint256.h"
-#include "util.h"
+
 
 #include <stdint.h>
 #include <algorithm>

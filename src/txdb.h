@@ -47,6 +47,8 @@ static const int64_t nMaxTxIndexCache = 1024;
 //! Max memory allocated to coin DB specific cache (MiB)
 static const int64_t nMaxCoinsDBCache = 8;
 
+const char DB_BEST_BLOCK = 'B';
+
 struct CDiskTxPos : public FlatFilePos {
     unsigned int nTxOffset; // after header
 

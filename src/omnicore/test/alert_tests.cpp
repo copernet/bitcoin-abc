@@ -2,7 +2,7 @@
 #include "omnicore/notifications.h"
 #include "omnicore/version.h"
 
-#include "util.h"
+
 #include "test/test_bitcoin.h"
 #include "tinyformat.h"
 

@@ -9,7 +9,7 @@
 
 #include "sync.h"
 #include "uint256.h"
-#include "util.h"
+
 #include "chain.h"
 #include "primitives/transaction.h"
 #include "coins.h"

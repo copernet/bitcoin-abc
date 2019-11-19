@@ -1,7 +1,7 @@
 #include "omnicore/log.h"
 
 #include "chainparamsbase.h"
-#include "util.h"
+
 #include "util/time.h"
 #include "logging.h"
 #include "chainparamsbase.h"

@@ -50,7 +50,7 @@
 #include "tinyformat.h"
 #include "uint256.h"
 #include "ui_interface.h"
-#include "util.h"
+
 #include "util/strencodings.h"
 #include "util/time.h"
 #include "chain.h"

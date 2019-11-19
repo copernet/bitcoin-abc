@@ -2,7 +2,7 @@
 
 #include "omnicore/log.h"
 
-#include "util.h"
+
 #include "util/time.h"
 #include "util/system.h"
 

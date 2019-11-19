@@ -11,7 +11,7 @@
 #include "omnicore/log.h"
 #include "omnicore/version.h"
 
-#include "util.h"
+
 #include "ui_interface.h"
 #include "validation.h"
 #include <util/system.h>

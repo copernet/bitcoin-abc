@@ -1,7 +1,7 @@
-Wormhole v0.2.5
+Wormhole v0.2.3
 ===================
 
-v0.2.5 is a release
+v0.2.3 is a release
 
 Please report bugs using the issue tracker on GitHub:
 
@@ -10,14 +10,14 @@ Please report bugs using the issue tracker on GitHub:
 Table of contents
 =================
 
-- [wormhole v0.2.5](#wormhole-core-v025)
+- [wormhole v0.2.3](#wormhole-core-v023)
 - [Upgrading and downgrading](#upgrading-and-downgrading)
   - [How to upgrade](#how-to-upgrade)
   - [Downgrading](#downgrading)
   - [Compatibility with Bitcoin ABC](#compatibility-with-bitcoin-abc)
 - [Notable changes](#notable-changes)
   - [Fix RPC `whc_gettransaction` issue](#Fix RPC issue)
-  - [Fix block creation failure on regtest network due to the activation of new rules in 'Bitcoin-ABC 0.20.6'](#Block creation failure on regtest network)
+  - [Fix block creation failure on regtest network due to the activation of new rules in 'Bitcoin-ABC 0.18.2'](#Block creation failure on regtest network)
   - [Modify some integration tests ](#Modify some integration tests )	
 - [Change log](#change-log)
 - [Credits](#credits)
@@ -52,7 +52,17 @@ Wormhole Core is based on Bitcoin ABC v0.18.2-6a51d4f and can be used as replace
 
 ===============
 
-The `Wormhole 0.2.5` node is compatible with the `Bitcoin-Abc 0.20.6` version.
+Fix RPC issue
+---------------------------------
+- Query information of crowdfunding transactions is incompleted
+- Add field ` amount` for Frozen/Unfrozen transaction
+
+Block creation failure on regtest network
+---------------------------------
+- The consensus requires that the minmal size of transactions in blocks is 100 bytes after `Bitcoin-ABC 0.18.2` activation.  So the block is invalid because the size of coinbase transaction is less than 100 bytes in regression network.
+
+
+The `Wormhole 0.2.3` node is compatible with the `Bitcoin-Abc 0.18.2` version.
 
 Change log
 ==========

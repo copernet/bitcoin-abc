@@ -3,11 +3,11 @@
 ## 构建wormholedocker镜像
 
 *  `cd wormhole`
-*	`docker build -t "copernet/wormhole:v0.2.4" .`
+*	`docker build -t "copernet/wormhole:v0.2.5" .`
 
 ## 运行容器
 
-*	`docker run -itd -v /home/ubuntu/.bitcoin:/root/.bitcoin  --name wormhole copernet/wormhole:v0.2.4`
+*	`docker run -itd -v /home/ubuntu/.bitcoin:/root/.bitcoin  --name wormhole copernet/wormhole:v0.2.5`
 	* Note: 上述的宿主机挂载的目录是：宿主机上存储的块链数据的目录.(可能当前宿主机已下载好了部分BCH链上的数据，存储在指定的目录； 或者在容器中运行节点时，下载的BCH链上数据需要存储至宿主机上)
 	
 ## 进入容器，运行wormhole 节点

@@ -3,11 +3,11 @@
 ## Build the wormhole image
 
 *  `cd wormhole`
-*	`docker build -t "copernet/wormhole:v0.2.4" .`
+*	`docker build -t "copernet/wormhole:v0.2.5" .`
 
 ## Run the container
 
-*	`docker run -itd -v /home/ubuntu/.bitcoin:/root/.bitcoin  --name wormhole copernet/wormhole:v0.2.4`
+*	`docker run -itd -v /home/ubuntu/.bitcoin:/root/.bitcoin  --name wormhole copernet/wormhole:v0.2.5`
 
 ## Run the wormhole node
 

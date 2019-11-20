@@ -78,6 +78,9 @@ static bool AppInit(int argc, char *argv[]) {
                  _("Run in the background as a daemon and accept commands"),
                  false, OptionsCategory::OPTIONS);
 #endif
+    gArgs.AddArg("-startclean=<n>",
+                 _("Restart scan the blockchain to build the wormhole database;( 1 : open)"),
+                 false, OptionsCategory::OPTIONS);
     std::string error;
     if (!gArgs.ParseParameters(argc, argv, error)) {
         fprintf(stderr, "Error parsing command line arguments: %s\n",
